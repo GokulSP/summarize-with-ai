@@ -56,7 +56,10 @@ tasks:
       - gitleaks git -v
   check:commit-msg:
     cmds:
-      - uvx gitfluff lint {{.CLI_ARGS}} --write
+      - >-
+        uvx gitfluff lint {{.CLI_ARGS}} --write
+        --msg-pattern '^(feat|fix|build|chore|ci|docs|style|refactor|perf|test|revert)(!)?: .+$'
+        --msg-pattern-description 'use "type: subject" (no scope), e.g. "fix: ..." not "fix(xx): ..."'
 
   sync:metadata:
     cmds:
