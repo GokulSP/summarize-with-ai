@@ -1,4 +1,4 @@
-# summarize-with-AI
+# summarize-with-ai
 
 A userscript that summarizes articles with Claude or Gemini in one click, with an image gallery, follow-up Q&A, and a Dieter Rams–inspired UI — for readers of Harvard Business Review, The Economist, and McKinsey & Company who want the gist without the full article. Personal fork of [Summarize with AI](https://github.com/insign/userscripts) by Hélio.
 
@@ -20,7 +20,7 @@ task setup   # pnpm install + lefthook install
 `task setup` is for working on the userscript's code. To use the userscript itself (no coding required):
 
 1. Install a userscript manager (above)
-2. Click to install: **[Summarize with AI](https://gokulsp.github.io/summarize-with-AI/Summarize%20with%20AI.user.js)**
+2. Click to install: **[Summarize with AI](https://gokulsp.github.io/summarize-with-ai/Summarize%20with%20AI.user.js)**
 3. Visit a supported site and enter your API key when prompted
 4. Verify: open your userscript manager's dashboard and confirm "Summarize with AI" is listed and enabled
 
@@ -71,7 +71,7 @@ WTFPL — see [LICENSE](LICENSE). Original work by Hélio ([@insign](https://git
 ## Project structure
 
 ```text
-summarize-with-AI/
+summarize-with-ai/
 ├── scripts/
 │   └── sync-metadata.js            # + sync-metadata.test.js — derives .meta.js/package.json's version from .user.js's @version header; run by lefthook's pre-commit metadata stage
 ├── .editorconfig

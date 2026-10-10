@@ -1,6 +1,6 @@
-# summarize-with-AI
+# summarize-with-ai
 
-Project-specific notes for summarize-with-AI. See README.md for setup, usage, and dev commands.
+Project-specific notes for summarize-with-ai. See README.md for setup, usage, and dev commands.
 
 ## Map
 
