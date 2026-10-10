@@ -78,20 +78,20 @@ describe("alignMetadata", () => {
 describe("syncMetadata", () => {
 	it("aligns the header, mirrors it to .meta.js and bumps package.json", () => {
 		const repo = fakeRepo({
-			"Summarize with AI.user.js": `#!x\n${UNALIGNED}\nbody();\n`,
+			"summarize-with-ai.user.js": `#!x\n${UNALIGNED}\nbody();\n`,
 			"package.json": '{\n\t"name": "demo",\n\t"version": "1.0.0"\n}\n',
 		});
 		const aligned = alignMetadata(UNALIGNED);
 
 		expect(syncMetadata(repo.io)).toBe("1.2.3");
 		expect(repo.files).toEqual({
-			"Summarize with AI.user.js": `#!x\n${aligned}\nbody();\n`,
-			"Summarize with AI.meta.js": `${aligned}\n`,
+			"summarize-with-ai.user.js": `#!x\n${aligned}\nbody();\n`,
+			"summarize-with-ai.meta.js": `${aligned}\n`,
 			"package.json": '{\n\t"name": "demo",\n\t"version": "1.2.3"\n}\n',
 		});
 		expect(repo.staged).toEqual([
-			"Summarize with AI.user.js",
-			"Summarize with AI.meta.js",
+			"summarize-with-ai.user.js",
+			"summarize-with-ai.meta.js",
 			"package.json",
 		]);
 	});
@@ -99,27 +99,27 @@ describe("syncMetadata", () => {
 	it("rewrites only the .meta.js mirror when everything is already in sync", () => {
 		const pkg = '{\n\t"version": "1.2.3"\n}\n';
 		const repo = fakeRepo({
-			"Summarize with AI.user.js": `${ALIGNED}\n`,
+			"summarize-with-ai.user.js": `${ALIGNED}\n`,
 			"package.json": pkg,
 		});
 
 		expect(syncMetadata(repo.io)).toBe("1.2.3");
-		expect(repo.staged).toEqual(["Summarize with AI.meta.js"]);
+		expect(repo.staged).toEqual(["summarize-with-ai.meta.js"]);
 		expect(repo.files["package.json"]).toBe(pkg);
-		expect(repo.logged).toEqual(["Metadata synced to Summarize with AI.meta.js (v1.2.3)"]);
+		expect(repo.logged).toEqual(["Metadata synced to summarize-with-ai.meta.js (v1.2.3)"]);
 	});
 
 	it("leaves package.json alone when the header has no @version", () => {
 		const header = "// ==UserScript==\n// @name Demo\n// ==/UserScript==";
-		const repo = fakeRepo({ "Summarize with AI.user.js": header });
+		const repo = fakeRepo({ "summarize-with-ai.user.js": header });
 
 		expect(syncMetadata(repo.io)).toBeUndefined();
-		expect(repo.staged).toEqual(["Summarize with AI.meta.js"]);
-		expect(repo.logged).toEqual(["Metadata synced to Summarize with AI.meta.js (vunknown)"]);
+		expect(repo.staged).toEqual(["summarize-with-ai.meta.js"]);
+		expect(repo.logged).toEqual(["Metadata synced to summarize-with-ai.meta.js (vunknown)"]);
 	});
 
 	it("fails when the userscript has no metadata block", () => {
-		const repo = fakeRepo({ "Summarize with AI.user.js": "body();\n" });
+		const repo = fakeRepo({ "summarize-with-ai.user.js": "body();\n" });
 
 		expect(() => syncMetadata(repo.io)).toThrow("Could not find userscript metadata block");
 		expect(repo.staged).toEqual([]);
@@ -129,7 +129,7 @@ describe("syncMetadata", () => {
 describe("main", () => {
 	it("exits 0 after a successful sync", () => {
 		const repo = fakeRepo({
-			"Summarize with AI.user.js": `${ALIGNED}
+			"summarize-with-ai.user.js": `${ALIGNED}
 `,
 			"package.json": "{}",
 		});

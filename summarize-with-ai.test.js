@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const USER_JS_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
-	"Summarize with AI.user.js",
+	"summarize-with-ai.user.js",
 );
 
 /**

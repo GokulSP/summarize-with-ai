@@ -20,7 +20,7 @@ task setup   # pnpm install + lefthook install
 `task setup` is for working on the userscript's code. To use the userscript itself (no coding required):
 
 1. Install a userscript manager (above)
-2. Click to install: **[Summarize with AI](https://gokulsp.github.io/summarize-with-ai/Summarize%20with%20AI.user.js)**
+2. Click to install: **[Summarize with AI](https://gokulsp.github.io/summarize-with-ai/summarize-with-ai.user.js)**
 3. Visit a supported site and enter your API key when prompted
 4. Verify: open your userscript manager's dashboard and confirm "Summarize with AI" is listed and enabled
 
@@ -44,11 +44,11 @@ None — no `process.env` usage anywhere in the script; the API key is stored vi
 | --- | --- |
 | `task lint` | biome check |
 | `task typecheck` | tsc --checkJs |
-| `task test` | vitest, failing under the coverage floors; scope to one test with `task test -- "Summarize with AI.ui.test.js" -t "long press"` |
+| `task test` | vitest, failing under the coverage floors; scope to one test with `task test -- summarize-with-ai.ui.test.js -t "long press"` |
 | `task audit` | pnpm audit + semgrep |
 | `task ci` | every gate on every file plus a full-history secret scan |
 
-`Summarize with AI.ui.test.js` runs the real userscript in a happy-dom page with only the userscript manager (`GM.*`) and the `@require`d Readability stood in, then drives it like a user: clicks, long presses, keys, touches.
+`summarize-with-ai.ui.test.js` runs the real userscript in a happy-dom page with only the userscript manager (`GM.*`) and the `@require`d Readability stood in, then drives it like a user: clicks, long presses, keys, touches.
 
 ## Features
 
@@ -62,7 +62,7 @@ None — no `process.env` usage anywhere in the script; the API key is stored vi
 
 ## Notes
 
-All code lives in `Summarize with AI.user.js`; bump `@version` in its header on every change (lefthook syncs `.meta.js` and `package.json` automatically on commit).
+All code lives in `summarize-with-ai.user.js`; bump `@version` in its header on every change (lefthook syncs `.meta.js` and `package.json` automatically on commit).
 
 ## License
 
@@ -78,10 +78,10 @@ summarize-with-ai/
 ├── .gitignore
 ├── .rumdl.toml                      # rumdl config for task lint:md
 ├── LICENSE                          # WTFPL — original work by Hélio (@insign), fork maintained by Gokul SP
-├── Summarize with AI.user.js        # The entire userscript — UI, summarization logic, API calls, image gallery, Q&A
-├── Summarize with AI.meta.js        # Userscript-manager metadata, auto-derived from .user.js's @version header
-├── Summarize with AI.test.js        # Unit tests for pure logic
-├── Summarize with AI.ui.test.js     # Happy-dom UI/interaction tests (clicks, long-press, keys, touches)
+├── summarize-with-ai.user.js        # The entire userscript — UI, summarization logic, API calls, image gallery, Q&A
+├── summarize-with-ai.meta.js        # Userscript-manager metadata, auto-derived from .user.js's @version header
+├── summarize-with-ai.test.js        # Unit tests for pure logic
+├── summarize-with-ai.ui.test.js     # Happy-dom UI/interaction tests (clicks, long-press, keys, touches)
 ├── Taskfile.yml                     # Single source of truth for every command
 ├── biome.json                       # Biome lint/format configuration
 ├── global.d.ts                      # Ambient globals for the @require'd Readability.js CDN scripts (tsc --checkJs)

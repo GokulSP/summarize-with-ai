@@ -9,7 +9,7 @@ pre-commit:
       run: task lint:md -- {staged_files}
       stage_fixed: true
     metadata:
-      glob: "Summarize with AI.user.js"
+      glob: "summarize-with-ai.user.js"
       run: task sync:metadata
       stage_fixed: true
     secrets:

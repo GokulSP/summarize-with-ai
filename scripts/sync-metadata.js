@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const SCRIPT_FILE = "Summarize with AI.user.js";
-const META_JS = "Summarize with AI.meta.js";
+const SCRIPT_FILE = "summarize-with-ai.user.js";
+const META_JS = "summarize-with-ai.meta.js";
 const PACKAGE_JSON = "package.json";
 
 const META_OPEN = "// ==UserScript==";
