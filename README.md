@@ -78,10 +78,8 @@ summarize-with-ai/
 ├── .gitignore
 ├── .rumdl.toml                      # rumdl config for task lint:md
 ├── LICENSE                          # WTFPL — original work by Hélio (@insign), fork maintained by Gokul SP
-├── summarize-with-ai.user.js        # The entire userscript — UI, summarization logic, API calls, image gallery, Q&A
+├── summarize-with-ai.user.js        # The entire userscript — UI, summarization logic, API calls, image gallery, Q&A — + summarize-with-ai.test.js (pure-logic unit tests), summarize-with-ai.ui.test.js (happy-dom UI/interaction tests: clicks, long-press, keys, touches)
 ├── summarize-with-ai.meta.js        # Userscript-manager metadata, auto-derived from .user.js's @version header
-├── summarize-with-ai.test.js        # Unit tests for pure logic
-├── summarize-with-ai.ui.test.js     # Happy-dom UI/interaction tests (clicks, long-press, keys, touches)
 ├── Taskfile.yml                     # Single source of truth for every command
 ├── biome.json                       # Biome lint/format configuration
 ├── global.d.ts                      # Ambient globals for the @require'd Readability.js CDN scripts (tsc --checkJs)
