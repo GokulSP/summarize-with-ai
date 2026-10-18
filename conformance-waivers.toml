@@ -1,0 +1,7 @@
+# Reasoned exceptions to dev-env's shared-gate conformance check (task check:conformance).
+# A waiver needs a reason; one that matches no failure fails as stale.
+
+[[waiver]]
+rule = "task.shared-not-shadowed"
+subject = "test:js"
+reason = "the userscript is a single .user.js at the repo root, so vitest coverage needs explicit --coverage.include globs the shared test:js doesn't pass"

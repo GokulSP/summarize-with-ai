@@ -1,30 +1,10 @@
+extends:
+  - ../dev-env/gates/lefthook/base.yml
+  - ../dev-env/gates/lefthook/js.yml
+
 pre-commit:
   commands:
-    lint-js:
-      glob: "*.{js,svelte,json,css,html}"
-      run: task lint:js -- {staged_files}
-      stage_fixed: true
-    lint-md:
-      glob: "*.md"
-      run: task lint:md -- {staged_files}
-      stage_fixed: true
     metadata:
       glob: "summarize-with-ai.user.js"
       run: task sync:metadata
       stage_fixed: true
-    secrets:
-      run: task security:secrets
-
-commit-msg:
-  commands:
-    conventional:
-      run: task check:commit-msg -- {1}
-
-pre-push:
-  commands:
-    lockfile-js:
-      run: task check:lockfile-js
-    typecheck:
-      run: task typecheck
-    test:
-      run: task test

@@ -1,92 +1,25 @@
 version: "3"
 
+# Gate tasks come from ../dev-env/gates; `task --list` shows them all. test:js stays local - the
+# userscript's coverage needs explicit --coverage.include globs (see conformance-waivers.toml).
+vars:
+  LANGS: js
+
+includes:
+  base: {taskfile: ../dev-env/gates/taskfile/base.yml, flatten: true}
+  js: {taskfile: ../dev-env/gates/taskfile/js.yml, flatten: true, excludes: [test:js]}
+
 tasks:
-  setup:
-    desc: Install dependencies and git hooks
-    cmds:
-      - pnpm install
-      - lefthook install
-
-  lint:
-    deps: [lint:js, lint:md]
-  lint:js:
-    cmds:
-      - pnpm exec biome check --write {{.CLI_ARGS}}
-  lint:md:
-    cmds:
-      - uvx rumdl check --fix {{.CLI_ARGS}}
-
-  typecheck:
-    deps: [typecheck:js]
-  typecheck:js:
-    cmds:
-      - pnpm exec tsc -p jsconfig.json --noEmit
-
-  test:
-    deps: [test:js]
   test:js:
+    desc: Vitest with coverage scoped to the userscript and its build scripts
     cmds:
       - >-
-        pnpm exec vitest run --coverage --coverage.include="*.user.js" --coverage.include="scripts/*.js"
-        --coverage.reporter=text --coverage.thresholds.lines=80
-        --coverage.thresholds.branches=80 {{.CLI_ARGS}}
-
-  audit:
-    deps: [audit:js]
-  audit:js:
-    cmds:
-      - pnpm audit
-      - >
-        docker run --rm -v "{{.TASKFILE_DIR}}:/src"
-        -e SEMGREP_ENABLE_VERSION_CHECK=0 semgrep/semgrep
-        semgrep scan --config p/javascript --config p/nodejsscan
-        --metrics off --error /src
-
-  check:lockfile:
-    deps: [check:lockfile-js]
-  check:lockfile-js:
-    cmds:
-      - pnpm install --frozen-lockfile
-
-  security:secrets:
-    cmds:
-      - gitleaks git --pre-commit --staged -v
-  security:history:
-    cmds:
-      - gitleaks git -v
-  check:commit-msg:
-    cmds:
-      - >-
-        uvx gitfluff lint {{.CLI_ARGS}} --write
-        --msg-pattern '^(feat|fix|build|chore|ci|docs|style|refactor|perf|test|revert)(!)?: .+$'
-        --msg-pattern-description 'use "type: subject" (no scope), e.g. "fix: ..." not "fix(xx): ..."'
+        pnpm exec vitest run --coverage --coverage.include="*.user.js"
+        --coverage.include="scripts/*.js" --coverage.reporter=text
+        --coverage.thresholds.lines=80 --coverage.thresholds.branches=80 {{.CLI_ARGS}}
 
   sync:metadata:
+    desc: Regenerate the userscript metadata block
     cmds:
       # pnpm exec runs the Node that devEngines pins, not whatever is on PATH
       - pnpm exec node scripts/sync-metadata.js
-
-  update:
-    desc: Monthly. Upgrade locked deps, uvx cache and system binaries, then re-run checks
-    cmds:
-      - pnpm update --latest
-      - pnpm exec knip
-      - uv cache clean rumdl gitfluff
-      - uv self update
-      - cmd: winget upgrade --all
-        ignore_error: true
-      - task: lint
-      - task: typecheck
-      - task: test
-      - task: audit
-
-  ci:
-    desc: Every gate on every file and the whole history. Run after cloning and before a release
-    cmds:
-      - task: check:lockfile
-      - task: setup
-      - task: lint
-      - task: typecheck
-      - task: test
-      - task: audit
-      - task: security:history
