@@ -10,3 +10,6 @@ allowBuilds:
 # won't move a deduped transitive version without an override.
 overrides:
   nanoid: "^3.3.18"
+  # source-map-js <1.2.2 has a ReDoS advisory (GHSA-68fv-2mgg-jv7q); transitive via
+  # @vitest/coverage-v8 > vite > postcss. Force the patched version.
+  source-map-js: ">=1.2.2"
