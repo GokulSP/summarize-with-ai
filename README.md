@@ -75,7 +75,7 @@ WTFPL — see [LICENSE](LICENSE). Original work by Hélio ([@insign](https://git
 summarize-with-ai/
 ├── .github/
 │   └── workflows/
-│       └── deploy-pages.yml         # On push to main: biome check, typecheck:js and test:js, then publishes every tracked file to GitHub Pages, the URL userscript managers poll for updates
+│       └── deploy-pages.yml         # On push to main, publishes every tracked file to GitHub Pages, the URL userscript managers poll for updates; the gates run in lefthook, not here
 ├── scripts/
 │   └── sync-metadata.js             # + sync-metadata.test.js — derives .meta.js/package.json's version from .user.js's @version header; run by lefthook's pre-commit metadata stage
 ├── .editorconfig

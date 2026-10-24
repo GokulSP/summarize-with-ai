@@ -15,6 +15,8 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+# No lint/typecheck/test here: their configs extend ../dev-env, a private sibling repo the
+# runner doesn't have, and lefthook already runs them before every commit and push.
 jobs:
   deploy:
     environment:
@@ -25,39 +27,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          # v6.3.0+ reads devEngines.runtime, so package.json is the one Node pin
-          node-version-file: 'package.json'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Typecheck and test go through Taskfile.yml, so the coverage floors are set in one place
-      - name: Setup Task
-        uses: arduino/setup-task@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Not `task lint`: that one rewrites files (--write) and needs uv for rumdl
-      - name: Lint
-        run: pnpm exec biome check
-
-      - name: Typecheck
-        run: task typecheck:js
-
-      - name: Test
-        run: task test:js
-
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      # Publish tracked files only, so node_modules never reaches Pages
+      # Publish tracked files only
       - name: Stage site
         run: mkdir _site && git ls-files -z | xargs -0 cp --parents -t _site
 
