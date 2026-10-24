@@ -39,5 +39,6 @@ credentials.json
 *.orig
 *.rej
 
-# Test coverage output
+# Test coverage and Playwright output
 coverage/
+test-results/

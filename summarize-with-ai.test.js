@@ -213,13 +213,13 @@ describe("truncationNotice", () => {
 
 	it("flags a Claude response cut off by max_tokens", () => {
 		expect(helpers.truncationNotice("max_tokens", "claude")).toBe(
-			'<p class="sai-error-text">The response was cut short because it hit the model’s length limit.</p>',
+			'<p class="error-text">The response was cut short because it hit the model’s length limit.</p>',
 		);
 	});
 
 	it("flags a Gemini response cut off by MAX_TOKENS", () => {
 		expect(helpers.truncationNotice("MAX_TOKENS", "gemini")).toBe(
-			'<p class="sai-error-text">The response was cut short because it hit the model’s length limit.</p>',
+			'<p class="error-text">The response was cut short because it hit the model’s length limit.</p>',
 		);
 	});
 });

@@ -56,8 +56,6 @@ async function loadPage(options = {}) {
 	const storage = new Map(Object.entries(options.storage ?? {}));
 	/** @type {SentRequest[]} */
 	const requests = [];
-	/** @type {string[]} */
-	const styles = [];
 	let responder = options.responder ?? defaultResponder;
 
 	const GM = {
@@ -66,10 +64,6 @@ async function loadPage(options = {}) {
 		/** @param {string} key @param {any} value */
 		setValue: async (key, value) => {
 			storage.set(key, value);
-		},
-		/** @param {string} css */
-		addStyle: css => {
-			styles.push(css);
 		},
 		/** @param {any} details */
 		xmlHttpRequest: details => {
@@ -120,6 +114,13 @@ async function loadPage(options = {}) {
 		// The fake clock installed in beforeEach, so cache ages are deterministic.
 		Date: globalThis.Date,
 		GM,
+		/** @param {any} parent @param {string} tag @param {{ textContent: string }} attributes */
+		GM_addElement: (parent, tag, attributes) => {
+			const element = document.createElement(tag);
+			element.textContent = attributes.textContent;
+			parent.appendChild(element);
+			return element;
+		},
 		Readability,
 		/** @param {any} doc */
 		isProbablyReaderable: doc => doc.body.textContent.trim().length > 40,
@@ -136,22 +137,30 @@ async function loadPage(options = {}) {
 	vm.runInContext(SOURCE, sandbox, { filename: USER_JS_PATH });
 	await settle();
 
+	// The script's UI lives in a shadow root: byId, $, $$ and focused look there, while
+	// onPage and allOnPage look at the page's own content.
+	const ui = () => /** @type {any} */ (document.querySelector("sai-root"))?.shadowRoot ?? null;
 	return {
 		window,
 		document,
 		storage,
 		requests,
-		styles,
 		/** @param {(req: SentRequest) => Reply} fn */
 		respondWith(fn) {
 			responder = fn;
 		},
+		/** @param {string} selector */
+		onPage: selector => /** @type {any} */ (document.querySelector(selector)),
+		/** @param {string} selector */
+		allOnPage: selector => /** @type {any[]} */ (Array.from(document.querySelectorAll(selector))),
 		/** @param {string} id */
-		byId: id => /** @type {any} */ (document.getElementById(id)),
+		byId: id => /** @type {any} */ (ui()?.getElementById(id) ?? null),
 		/** @param {string} selector */
-		$: selector => /** @type {any} */ (document.querySelector(selector)),
+		$: selector => /** @type {any} */ (ui()?.querySelector(selector) ?? null),
 		/** @param {string} selector */
-		$$: selector => /** @type {any[]} */ (Array.from(document.querySelectorAll(selector))),
+		$$: selector => /** @type {any[]} */ (Array.from(ui()?.querySelectorAll(selector) ?? [])),
+		/** The focused element inside the UI (document.activeElement stops at its host). */
+		focused: () => /** @type {any} */ (ui()?.activeElement ?? null),
 	};
 }
 
@@ -167,14 +176,15 @@ function fire(window, target, type, init = {}) {
 		: type === "wheel"
 			? window.WheelEvent
 			: window.MouseEvent;
-	const event = new Ctor(type, { bubbles: true, cancelable: true, ...init });
+	// Composed, like the browser's own input events, so they cross the shadow boundary.
+	const event = new Ctor(type, { bubbles: true, cancelable: true, composed: true, ...init });
 	target.dispatchEvent(event);
 	return event;
 }
 
 /** happy-dom's TouchEvent ignores touch lists, so attach them directly. @param {any} window @param {any} target @param {string} type @param {{ touches?: any[], changedTouches?: any[] }} lists */
 function touch(window, target, type, lists) {
-	const event = new window.Event(type, { bubbles: true, cancelable: true });
+	const event = new window.Event(type, { bubbles: true, cancelable: true, composed: true });
 	Object.defineProperty(event, "touches", { value: lists.touches ?? [] });
 	Object.defineProperty(event, "changedTouches", { value: lists.changedTouches ?? [] });
 	target.dispatchEvent(event);
@@ -182,7 +192,7 @@ function touch(window, target, type, lists) {
 
 /** Long-press the S button (holds past the 500ms threshold) to open the model menu. @param {Awaited<ReturnType<typeof loadPage>>} page */
 async function openModelMenu(page) {
-	const button = page.byId("sai-summarize-button");
+	const button = page.byId("summarize-button");
 	fire(page.window, button, "mousedown");
 	await settle(560);
 	fire(page.window, button, "mouseup");
@@ -204,20 +214,21 @@ afterEach(() => {
 });
 
 describe("page load", () => {
-	it("adds the S button and styles on a readable article", async () => {
+	it("adds the S button and its stylesheet inside the UI's shadow root", async () => {
 		const page = await loadPage();
 
-		expect(page.byId("sai-summarize-button").textContent).toBe("S");
-		expect(page.byId("sai-model-dropdown").style.display).toBe("none");
-		expect(page.styles).toHaveLength(1);
-		// The host page's zoom is left alone.
-		expect(page.$('meta[name="viewport"]')).toBeNull();
+		expect(page.byId("summarize-button").textContent).toBe("S");
+		expect(page.byId("model-dropdown").style.display).toBe("none");
+		expect(page.$$("style")).toHaveLength(1);
+		// Nothing is styled on the page itself, and its zoom is left alone.
+		expect(page.allOnPage("style")).toHaveLength(0);
+		expect(page.onPage('meta[name="viewport"]')).toBeNull();
 	});
 
 	it("stays out of the way on a page with no article", async () => {
 		const page = await loadPage({ body: "<nav>Home</nav>" });
 
-		expect(page.byId("sai-summarize-button")).toBeNull();
+		expect(page.onPage("sai-root")).toBeNull();
 	});
 });
 
@@ -225,13 +236,13 @@ describe("summarizing with Claude", () => {
 	it("asks for an API key when none is stored", async () => {
 		const page = await loadPage();
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-message").innerText).toBe(
+		expect(page.$(".error-message").innerText).toBe(
 			"Claude API key is required. To add one, long-press the S button and select Reset Key.",
 		);
-		expect(page.byId("sai-summarize-button").style.display).toBe("flex");
+		expect(page.byId("summarize-button").style.display).toBe("flex");
 		expect(page.requests).toEqual([]);
 	});
 
@@ -253,7 +264,7 @@ describe("summarizing with Claude", () => {
 					},
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle(100);
 
 		const [post] = posts(page);
@@ -269,26 +280,26 @@ describe("summarizing with Claude", () => {
 		]);
 		expect(page.storage.get("last_used_model")).toBe("claude-sonnet-5-0");
 
-		const summary = page.$(".sai-summary-content-body").innerHTML;
+		const summary = page.$(".summary-content-body").innerHTML;
 		expect(summary).toBe("<p>Core <span>point</span></p><a>bad</a>");
-		expect(page.byId("sai-summarize-question-input")?.tagName).toBe("INPUT");
-		expect(page.byId("sai-summarize-button").style.display).toBe("none");
+		expect(page.byId("summarize-question-input")?.tagName).toBe("INPUT");
+		expect(page.byId("summarize-button").style.display).toBe("none");
 	});
 
 	it("reuses the cached model list and summary on the next click", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
-		page.byId("sai-summarize-close").click();
-		expect(page.byId("sai-summarize-overlay")).toBeNull();
-		expect(page.byId("sai-summarize-button").style.display).toBe("flex");
+		page.byId("summarize-close").click();
+		expect(page.byId("summarize-overlay")).toBeNull();
+		expect(page.byId("summarize-button").style.display).toBe("flex");
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		expect(page.requests.filter(r => r.method === "GET")).toHaveLength(1);
 		expect(posts(page)).toHaveLength(1);
-		expect(page.$(".sai-summary-content-body").textContent).toBe("Summary text.");
+		expect(page.$(".summary-content-body").textContent).toBe("Summary text.");
 	});
 
 	it("shows an API error with a working Try Again button", async () => {
@@ -299,16 +310,16 @@ describe("summarizing with Claude", () => {
 				: { status: 400, response: { error: { message: "invalid x-api-key" } } },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-4-6] API Error (400): invalid x-api-key",
 		);
 		page.respondWith(defaultResponder);
-		page.byId("sai-summarize-retry-button").click();
+		page.byId("summarize-retry-button").click();
 		await settle();
-		expect(page.$(".sai-summary-content-body").textContent).toBe("Summary text.");
+		expect(page.$(".summary-content-body").textContent).toBe("Summary text.");
 	});
 
 	it.each([
@@ -324,10 +335,10 @@ describe("summarizing with Claude", () => {
 		});
 		page.respondWith(() => ({ fail: /** @type {any} */ (fail) }));
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(message);
+		expect(page.$(".error-text")?.textContent).toBe(message);
 	});
 
 	it("explains an empty response instead of showing nothing", async () => {
@@ -338,10 +349,10 @@ describe("summarizing with Claude", () => {
 				: { response: { content: [], stop_reason: "max_tokens" } },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] API response did not contain a valid summary (stop reason: max_tokens, status: 200).",
 		);
 	});
@@ -355,32 +366,32 @@ describe("summarizing with Claude", () => {
 			return attempts === 1 ? { status: 503, response: {} } : defaultResponder(req);
 		});
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle(3500);
 
 		expect(attempts).toBe(2);
-		expect(page.$(".sai-summary-content-body").textContent).toBe("Summary text.");
+		expect(page.$(".summary-content-body").textContent).toBe("Summary text.");
 	});
 
 	it("refuses an article over the length limit", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.$("article p").textContent = "x".repeat(100_001);
+		page.onPage("article p").textContent = "x".repeat(100_001);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: Article is too long to summarize (100,017 characters, limit is 100,000).",
 		);
 	});
 
 	it("falls back to the load-time article when the page no longer parses", async () => {
 		const page = await loadPage({ storage: KEYED });
-		const button = page.byId("sai-summarize-button");
+		const host = page.onPage("sai-root");
 		page.document.body.innerHTML = "";
-		page.document.body.appendChild(button);
+		page.document.body.appendChild(host);
 
-		button.click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		// The load-time snapshot is still used, so summarising goes ahead.
@@ -389,16 +400,16 @@ describe("summarizing with Claude", () => {
 
 	it("recovers from a stale stored model and rejects an unknown one", async () => {
 		const stale = await loadPage({ storage: { ...KEYED, last_used_model: "claude-sonnet-3-0" } });
-		stale.byId("sai-summarize-button").click();
+		stale.byId("summarize-button").click();
 		await settle();
 		expect(JSON.parse(/** @type {string} */ (posts(stale)[0].data)).model).toBe(
 			"claude-sonnet-5-0",
 		);
 
 		const unknown = await loadPage({ storage: { ...KEYED, last_used_model: "gpt-9" } });
-		unknown.byId("sai-summarize-button").click();
+		unknown.byId("summarize-button").click();
 		await settle();
-		expect(unknown.$(".sai-error-message").innerText).toBe(
+		expect(unknown.$(".error-message").innerText).toBe(
 			'Model "gpt-9" is not available. Please select another model.',
 		);
 	});
@@ -439,7 +450,7 @@ describe("summarizing with Gemini", () => {
 		);
 
 		await openModelMenu(page);
-		expect(page.byId("sai-model-dropdown").style.display).toBe("block");
+		expect(page.byId("model-dropdown").style.display).toBe("block");
 		page.$('[data-model-id="gemini-3.5-flash"]').click();
 		await settle();
 
@@ -454,8 +465,8 @@ describe("summarizing with Gemini", () => {
 			"x-goog-api-key": "g-key",
 		});
 		expect(page.storage.get("last_used_model")).toBe("gemini-4.0-flash");
-		expect(page.$(".sai-summary-content-body p")?.textContent).toBe("Flash says");
-		expect(page.$(".sai-summary-content-body .sai-error-text")?.textContent).toBe(
+		expect(page.$(".summary-content-body p")?.textContent).toBe("Flash says");
+		expect(page.$(".summary-content-body .error-text")?.textContent).toBe(
 			"The response was cut short because it hit the model’s length limit.",
 		);
 	});
@@ -474,7 +485,7 @@ describe("summarizing with Gemini", () => {
 				: defaultResponder(req),
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		expect(posts(page).map(r => r.url.split("/").pop()?.split(":")[0])).toEqual([
@@ -482,14 +493,14 @@ describe("summarizing with Gemini", () => {
 			"gemini-3.5-flash",
 		]);
 		expect(page.storage.get("latest_gemini_cache")).toBeNull();
-		expect(page.$(".sai-summary-content-body").textContent).toBe("Gemini said");
+		expect(page.$(".summary-content-body").textContent).toBe("Gemini said");
 	});
 });
 
 describe("asking a question", () => {
 	/** @param {Awaited<ReturnType<typeof loadPage>>} page @param {string} question */
 	async function ask(page, question) {
-		const input = page.byId("sai-summarize-question-input");
+		const input = page.byId("summarize-question-input");
 		input.value = question;
 		fire(page.window, input, "keypress", { key: "Enter" });
 		await settle();
@@ -497,7 +508,7 @@ describe("asking a question", () => {
 
 	it("answers with formatted text about the article", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 		page.respondWith(req =>
 			req.method === "GET"
@@ -512,27 +523,27 @@ describe("asking a question", () => {
 		const lastPost = JSON.parse(/** @type {string} */ (posts(page).at(-1)?.data));
 		expect(lastPost.max_tokens).toBe(800);
 		expect(lastPost.messages[0].content.split("\n").at(-3)).toBe("Question: Why <now>?");
-		expect(page.$(".sai-answer > p")?.innerHTML).toBe("<strong>Q:</strong> Why &lt;now&gt;?");
-		expect(page.$(".sai-answer-content")?.innerHTML).toBe(
+		expect(page.$(".answer > p")?.innerHTML).toBe("<strong>Q:</strong> Why &lt;now&gt;?");
+		expect(page.$(".answer-content")?.innerHTML).toBe(
 			"<p>Rates went up.</p>\n<ul>\n<li>First</li>\n<li>Second</li>\n</ul>",
 		);
 
-		expect(page.byId("sai-summarize-question-input").value).toBe("");
-		expect(page.byId("sai-summarize-ask-button").textContent).toBe("Ask");
+		expect(page.byId("summarize-question-input").value).toBe("");
+		expect(page.byId("summarize-ask-button").textContent).toBe("Ask");
 	});
 
 	it("needs a question, and shows request failures inline", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		page.byId("sai-summarize-ask-button").click();
+		page.byId("summarize-ask-button").click();
 		await settle();
-		expect(page.$(".sai-error-message").innerText).toBe("Please enter a question.");
+		expect(page.$(".error-message").innerText).toBe("Please enter a question.");
 
 		page.respondWith(() => ({ status: 429, response: { message: "rate limited" } }));
 		await ask(page, "What next?");
-		expect(page.$("#sai-answer-container .sai-error-text")?.textContent).toBe(
+		expect(page.$("#answer-container .error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] API Error (429): rate limited",
 		);
 	});
@@ -542,39 +553,37 @@ describe("API key management", () => {
 	it("saves, clears, or leaves the key from the Reset Key prompt", async () => {
 		const page = await loadPage();
 		await openModelMenu(page);
-		const resetClaude = () => page.$(".sai-reset-key-link").click();
+		const resetClaude = () => page.$(".reset-key-link").click();
 
 		resetClaude();
 		await settle(150);
-		const input = page.byId("sai-custom-modal-input");
-		expect(page.byId("sai-custom-modal-message").textContent).toBe("Enter your Claude API key:");
+		const input = page.byId("custom-modal-input");
+		expect(page.byId("custom-modal-message").textContent).toBe("Enter your Claude API key:");
 		input.value = "  sk-new  ";
 		fire(page.window, input, "keydown", { key: "Enter" });
 		await settle(260);
 		expect(page.storage.get("claude_api_key")).toBe("sk-new");
-		expect(page.byId("sai-custom-modal-message").textContent).toBe(
+		expect(page.byId("custom-modal-message").textContent).toBe(
 			"Claude API key updated successfully.",
 		);
-		page.$(".sai-modal-button-primary").click();
+		page.$(".modal-button-primary").click();
 		await settle(260);
-		expect(page.byId("sai-custom-modal-overlay")).toBeNull();
+		expect(page.byId("custom-modal-overlay")).toBeNull();
 
 		resetClaude();
 		await settle(150);
-		page.$(".sai-modal-button-primary").click();
+		page.$(".modal-button-primary").click();
 		await settle(260);
 		expect(page.storage.get("claude_api_key")).toBe("");
-		expect(page.byId("sai-custom-modal-message").textContent).toBe(
-			"Claude API key has been cleared.",
-		);
+		expect(page.byId("custom-modal-message").textContent).toBe("Claude API key has been cleared.");
 		fire(page.window, page.document, "keydown", { key: "Escape" });
 		await settle(260);
 
 		resetClaude();
 		await settle(150);
-		fire(page.window, page.byId("sai-custom-modal-input"), "keydown", { key: "Escape" });
+		fire(page.window, page.byId("custom-modal-input"), "keydown", { key: "Escape" });
 		await settle(260);
-		expect(page.byId("sai-custom-modal-overlay")).toBeNull();
+		expect(page.byId("custom-modal-overlay")).toBeNull();
 		expect(page.storage.get("claude_api_key")).toBe("");
 	});
 });
@@ -582,45 +591,45 @@ describe("API key management", () => {
 describe("keyboard-only use", () => {
 	it("opens the model menu from the S button and picks a model with the keyboard", async () => {
 		const page = await loadPage({ storage: { gemini_api_key: "g" } });
-		const button = page.byId("sai-summarize-button");
+		const button = page.byId("summarize-button");
 		expect(button.tagName).toBe("BUTTON");
 		expect(button.getAttribute("aria-label")).toBe("Summarize with AI");
 
 		fire(page.window, button, "keydown", { key: "ArrowUp" });
-		expect(page.byId("sai-model-dropdown").style.display).toBe("block");
-		expect(page.document.activeElement?.dataset.modelId).toBe("claude-sonnet-4-6");
+		expect(page.byId("model-dropdown").style.display).toBe("block");
+		expect(page.focused()?.dataset.modelId).toBe("claude-sonnet-4-6");
 
 		const flash = page.$('[data-model-id="gemini-3.5-flash"]');
 		expect(flash.tagName).toBe("BUTTON");
 		flash.click(); // what Enter or Space does on a focused button
 		await settle();
 
-		expect(page.byId("sai-model-dropdown").style.display).toBe("none");
+		expect(page.byId("model-dropdown").style.display).toBe("none");
 		expect(page.storage.get("last_used_model")).toBe("gemini-3.5-flash");
-		expect(page.$(".sai-summary-content-body").textContent).toBe("Gemini said");
+		expect(page.$(".summary-content-body").textContent).toBe("Gemini said");
 	});
 
 	it("closes the menu on Escape and hands focus back to the S button", async () => {
 		const page = await loadPage({ storage: KEYED });
-		const button = page.byId("sai-summarize-button");
+		const button = page.byId("summarize-button");
 		button.click();
 		await settle();
 
 		fire(page.window, button, "keydown", { key: "ContextMenu" });
-		fire(page.window, page.document.activeElement, "keydown", { key: "Escape" });
+		fire(page.window, page.focused(), "keydown", { key: "Escape" });
 
-		expect(page.byId("sai-model-dropdown").style.display).toBe("none");
-		expect(page.document.activeElement).toBe(button);
+		expect(page.byId("model-dropdown").style.display).toBe("none");
+		expect(page.focused()).toBe(button);
 		// The summary underneath stays open.
-		expect(page.byId("sai-summarize-overlay")?.isConnected).toBe(true);
+		expect(page.byId("summarize-overlay")?.isConnected).toBe(true);
 	});
 
 	it("ignores other keys on the S button", async () => {
 		const page = await loadPage();
 
-		fire(page.window, page.byId("sai-summarize-button"), "keydown", { key: "ArrowDown" });
+		fire(page.window, page.byId("summarize-button"), "keydown", { key: "ArrowDown" });
 
-		expect(page.byId("sai-model-dropdown").style.display).toBe("none");
+		expect(page.byId("model-dropdown").style.display).toBe("none");
 	});
 
 	it("reaches gallery images and thumbnails as buttons", async () => {
@@ -629,24 +638,24 @@ describe("keyboard-only use", () => {
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/a.png" alt="A"></article>`,
 		});
-		sized(page.$("article img"), 1000, 600);
-		page.byId("sai-summarize-button").click();
+		sized(page.onPage("article img"), 1000, 600);
+		page.byId("summarize-button").click();
 		await settle();
 
-		const item = page.$(".sai-gallery-item");
+		const item = page.$(".gallery-item");
 		expect(item.tagName).toBe("BUTTON");
 		item.click();
 
-		expect(page.$(".sai-lightbox-thumbnail-item").tagName).toBe("BUTTON");
-		expect(page.$(".sai-lightbox-counter").textContent).toBe("1 / 1");
+		expect(page.$(".lightbox-thumbnail-item").tagName).toBe("BUTTON");
+		expect(page.$(".lightbox-counter").textContent).toBe("1 / 1");
 	});
 
 	it("labels the question box", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$('label[for="sai-summarize-question-input"]').textContent).toBe(
+		expect(page.$('label[for="summarize-question-input"]').textContent).toBe(
 			"Ask a question about this article:",
 		);
 	});
@@ -658,32 +667,47 @@ describe("keyboard and pointer shortcuts", () => {
 
 		fire(page.window, page.document, "keydown", { code: "KeyS", key: "s", altKey: true });
 		await settle();
-		expect(page.$(".sai-summary-content-body")?.innerHTML).toBe("<p>Summary text.</p>");
+		expect(page.$(".summary-content-body")?.innerHTML).toBe("<p>Summary text.</p>");
 
 		fire(page.window, page.document, "keydown", { key: "Escape" });
-		expect(page.byId("sai-summarize-overlay")).toBeNull();
+		expect(page.byId("summarize-overlay")).toBeNull();
+	});
+
+	it("leaves Alt+S typed in the question box to the box, keeping the draft", async () => {
+		const page = await loadPage({ storage: KEYED });
+		page.byId("summarize-button").click();
+		await settle();
+		const input = page.byId("summarize-question-input");
+		input.focus();
+		input.value = "Why now?";
+
+		fire(page.window, input, "keydown", { code: "KeyS", key: "s", altKey: true });
+		await settle();
+
+		expect(page.byId("summarize-question-input")).toBe(input);
+		expect(input.value).toBe("Why now?");
 	});
 
 	it("closes the overlay when its backdrop is clicked", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		page.byId("sai-summarize-overlay").click();
+		page.byId("summarize-overlay").click();
 
-		expect(page.byId("sai-summarize-overlay")).toBeNull();
+		expect(page.byId("summarize-overlay")).toBeNull();
 	});
 
 	it("hides the model menu on Escape, an outside click, or a second long press", async () => {
 		const page = await loadPage();
-		const menu = page.byId("sai-model-dropdown");
+		const menu = page.byId("model-dropdown");
 
 		await openModelMenu(page);
 		fire(page.window, page.document, "keydown", { key: "Escape" });
 		expect(menu.style.display).toBe("none");
 
 		await openModelMenu(page);
-		page.$("article").click();
+		page.onPage("article").click();
 		expect(menu.style.display).toBe("none");
 
 		await openModelMenu(page);
@@ -695,8 +719,8 @@ describe("keyboard and pointer shortcuts", () => {
 		const page = await loadPage({
 			body: `<article><p>${ARTICLE_TEXT}</p><input id="q"></article>`,
 		});
-		const input = page.byId("q");
-		const button = page.byId("sai-summarize-button");
+		const input = page.onPage("#q");
+		const button = page.byId("summarize-button");
 
 		input.dispatchEvent(new page.window.FocusEvent("focusin", { bubbles: true }));
 		expect(button.style.display).toBe("none");
@@ -709,12 +733,12 @@ describe("keyboard and pointer shortcuts", () => {
 
 	it("dismisses an error notification from its close button", async () => {
 		const page = await loadPage({ storage: { ...KEYED, last_used_model: "gpt-9" } });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		page.$(".sai-error-close").click();
+		page.$(".error-close").click();
 
-		expect(page.byId("sai-summarize-error")).toBeNull();
+		expect(page.byId("summarize-error")).toBeNull();
 	});
 });
 
@@ -732,7 +756,7 @@ describe("image gallery and lightbox", () => {
 
 	async function openGallery() {
 		const page = await loadPage({ storage: KEYED, body: GALLERY_PAGE });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle(700);
 		return page;
 	}
@@ -740,9 +764,9 @@ describe("image gallery and lightbox", () => {
 	it("collects charts and article images, skipping promos, headers and tiny images", async () => {
 		const page = await openGallery();
 
-		const items = page.$$(".sai-gallery-item");
+		const items = page.$$(".gallery-item");
 		expect(items).toHaveLength(3);
-		expect(items[0].classList.contains("sai-gallery-item-iframe")).toBe(true);
+		expect(items[0].classList.contains("gallery-item-iframe")).toBe(true);
 		expect(items.slice(1).map(item => item.querySelector("img").alt)).toEqual([
 			"Chart one",
 			"Hero",
@@ -753,28 +777,28 @@ describe("image gallery and lightbox", () => {
 		const page = await openGallery();
 		page.$('[data-image-index="1"] img').click();
 
-		const counter = page.$(".sai-lightbox-counter");
-		const image = page.$(".sai-lightbox-image");
+		const counter = page.$(".lightbox-counter");
+		const image = page.$(".lightbox-image");
 		expect(counter.textContent).toBe("2 / 3");
 		expect(image.alt).toBe("Chart one");
 
-		page.$(".sai-lightbox-next").click();
+		page.$(".lightbox-next").click();
 		expect(counter.textContent).toBe("3 / 3");
-		expect(page.$(".sai-lightbox-next").disabled).toBe(true);
+		expect(page.$(".lightbox-next").disabled).toBe(true);
 
 		fire(page.window, page.document, "keydown", { key: "ArrowLeft" });
 		fire(page.window, page.document, "keydown", { key: "ArrowLeft" });
 		expect(counter.textContent).toBe("1 / 3");
-		expect(page.$(".sai-lightbox-iframe").style.display).toBe("block");
+		expect(page.$(".lightbox-iframe").style.display).toBe("block");
 		fire(page.window, page.document, "keydown", { key: "ArrowRight" });
 		expect(counter.textContent).toBe("2 / 3");
 
-		page.$$(".sai-lightbox-thumbnail-img")[1].click();
+		page.$$(".lightbox-thumbnail-img")[1].click();
 		expect(counter.textContent).toBe("3 / 3");
-		page.$(".sai-lightbox-thumbnail-iframe-indicator").click();
+		page.$(".lightbox-thumbnail-iframe-indicator").click();
 		expect(counter.textContent).toBe("1 / 3");
 
-		const content = page.$(".sai-lightbox-content");
+		const content = page.$(".lightbox-content");
 		const at = (/** @type {number} */ x) => ({ screenX: x, screenY: 0, clientX: x, clientY: 0 });
 		touch(page.window, content, "touchstart", { touches: [at(300)] });
 		touch(page.window, content, "touchend", { changedTouches: [at(100)] });
@@ -784,16 +808,16 @@ describe("image gallery and lightbox", () => {
 		expect(counter.textContent).toBe("1 / 3");
 
 		fire(page.window, page.document, "keydown", { key: "Escape" });
-		expect(page.$(".sai-lightbox-overlay")).toBeNull();
+		expect(page.$(".lightbox-overlay")).toBeNull();
 		// Escape closes only the lightbox; the summary it was opened from stays.
-		expect(page.byId("sai-summarize-overlay")?.isConnected).toBe(true);
+		expect(page.byId("summarize-overlay")?.isConnected).toBe(true);
 	});
 
 	it("zooms and pans with wheel, drag, double-click, pinch and double-tap", async () => {
 		const page = await openGallery();
 		page.$('[data-image-index="2"] img').click();
-		const image = page.$(".sai-lightbox-image");
-		const content = page.$(".sai-lightbox-content");
+		const image = page.$(".lightbox-image");
+		const content = page.$(".lightbox-content");
 
 		fire(page.window, image, "wheel", { deltaY: -100 });
 		expect(image.style.transform).toBe("translate(0px, 0px) scale(1.25)");
@@ -831,12 +855,12 @@ describe("image gallery and lightbox", () => {
 		touch(page.window, content, "touchend", { changedTouches: [finger(50)] });
 		expect(image.style.transform).toBe("translate(0px, 0px) scale(1)");
 
-		page.$(".sai-lightbox-overlay").click();
-		expect(page.$(".sai-lightbox-overlay")).toBeNull();
+		page.$(".lightbox-overlay").click();
+		expect(page.$(".lightbox-overlay")).toBeNull();
 		page.$('[data-image-index="0"]').click();
-		page.$(".sai-lightbox-prev").click();
-		page.$$(".sai-lightbox-menubar .sai-menubar-button").at(-1).click();
-		expect(page.$(".sai-lightbox-overlay")).toBeNull();
+		page.$(".lightbox-prev").click();
+		page.$$(".lightbox-menubar .menubar-button").at(-1).click();
+		expect(page.$(".lightbox-overlay")).toBeNull();
 	});
 });
 
@@ -859,14 +883,14 @@ describe("site-specific image filtering", () => {
 				<img id="figure" src="https://hbr.org/figure.jpg">
 			</article>`,
 		});
-		for (const id of ["shop", "podcast", "figure"]) sized(page.byId(id), 1200, 800);
-		sized(page.byId("cover"), 500, 750);
-		sized(page.byId("promo"), 383, 215);
+		for (const id of ["shop", "podcast", "figure"]) sized(page.onPage(`#${id}`), 1200, 800);
+		sized(page.onPage("#cover"), 500, 750);
+		sized(page.onPage("#promo"), 383, 215);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		const images = page.$$(".sai-gallery-item img");
+		const images = page.$$(".gallery-item img");
 		expect(images.map(img => img.getAttribute("src"))).toEqual(["https://hbr.org/figure.jpg"]);
 		expect(images[0].alt).toBe("Article image");
 	});
@@ -878,14 +902,14 @@ describe("site-specific image filtering", () => {
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/chart.png"></article>`,
 		});
-		const img = page.$("article img");
+		const img = page.onPage("article img");
 		img.setAttribute("alt", alt);
 		sized(img, 1000, 600);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		const shown = page.$(".sai-gallery-item img");
+		const shown = page.$(".gallery-item img");
 		expect(shown.getAttribute("alt")).toBe(alt);
 		expect(shown.hasAttribute("onerror")).toBe(false);
 	});
@@ -902,15 +926,12 @@ describe("site-specific image filtering", () => {
 				<img src="https://www.mckinsey.com/exhibit-2.svg" alt="Exhibit 2">
 			</article>`,
 		});
-		for (const img of page.$$("article img").slice(0, 3)) sized(img, 1200, 800);
+		for (const img of page.allOnPage("article img").slice(0, 3)) sized(img, 1200, 800);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$$(".sai-gallery-item img").map(img => img.alt)).toEqual([
-			"Exhibit 1",
-			"Exhibit 2",
-		]);
+		expect(page.$$(".gallery-item img").map(img => img.alt)).toEqual(["Exhibit 1", "Exhibit 2"]);
 	});
 
 	it("waits for lazy images and reads deferred sources", async () => {
@@ -924,14 +945,14 @@ describe("site-specific image filtering", () => {
 				<img loading="lazy" data-src="https://example.com/lazy.jpg">
 			</main>`,
 		});
-		sized(page.$("img"), 1000, 600);
+		sized(page.onPage("img"), 1000, 600);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle(250);
 
-		const items = page.$$(".sai-gallery-item");
+		const items = page.$$(".gallery-item");
 		expect(items).toHaveLength(2);
-		expect(items[0].classList.contains("sai-gallery-item-iframe")).toBe(true);
+		expect(items[0].classList.contains("gallery-item-iframe")).toBe(true);
 		expect(items[1].querySelector("img").getAttribute("src")).toBe("https://example.com/lazy.jpg");
 	});
 });
@@ -945,11 +966,11 @@ describe("less common API responses", () => {
 				: { response: JSON.stringify({ content: [{ type: "text", text: "<p>From text</p>" }] }) },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		expect(JSON.parse(/** @type {string} */ (posts(page)[0].data)).model).toBe("claude-sonnet-6-1");
-		expect(page.$(".sai-summary-content-body").textContent).toBe("From text");
+		expect(page.$(".summary-content-body").textContent).toBe("From text");
 	});
 
 	it("keeps the default model when the models API answers with an error status", async () => {
@@ -960,7 +981,7 @@ describe("less common API responses", () => {
 				: defaultResponder(req),
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		expect(JSON.parse(/** @type {string} */ (posts(page)[0].data)).model).toBe("claude-sonnet-4-6");
@@ -974,11 +995,11 @@ describe("less common API responses", () => {
 				: { status: 400, response: { error: { message: '<img src=x onerror="boom()">' } } },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		const content = page.byId("sai-summarize-content");
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		const content = page.byId("summarize-content");
+		expect(page.$(".error-text")?.textContent).toBe(
 			'Error: [claude-sonnet-5-0] API Error (400): <img src=x onerror="boom()">',
 		);
 		expect(content.querySelector("img")).toBeNull();
@@ -990,10 +1011,10 @@ describe("less common API responses", () => {
 			req.method === "GET" ? defaultResponder(req) : { status: 502, response: "<html>Bad gateway" },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] Unexpected token '<', \"<html>Bad gateway\" is not valid JSON",
 		);
 	});
@@ -1001,7 +1022,7 @@ describe("less common API responses", () => {
 	it("keeps the default model when model discovery fails or finds nothing", async () => {
 		const claude = await loadPage({ storage: KEYED });
 		claude.respondWith(req => (req.method === "GET" ? { fail: "error" } : defaultResponder(req)));
-		claude.byId("sai-summarize-button").click();
+		claude.byId("summarize-button").click();
 		await settle();
 		expect(JSON.parse(/** @type {string} */ (posts(claude)[0].data)).model).toBe(
 			"claude-sonnet-4-6",
@@ -1010,7 +1031,7 @@ describe("less common API responses", () => {
 		const gemini = await loadPage({
 			storage: { gemini_api_key: "g", last_used_model: "gemini-3.5-flash" },
 		});
-		gemini.byId("sai-summarize-button").click();
+		gemini.byId("summarize-button").click();
 		await settle();
 		expect(posts(gemini)[0].url).toBe(
 			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
@@ -1020,7 +1041,7 @@ describe("less common API responses", () => {
 	it("keeps the default model when discovery lists no usable model", async () => {
 		const claude = await loadPage({ storage: KEYED });
 		claude.respondWith(req => (req.method === "GET" ? { response: {} } : defaultResponder(req)));
-		claude.byId("sai-summarize-button").click();
+		claude.byId("summarize-button").click();
 		await settle();
 		expect(JSON.parse(/** @type {string} */ (posts(claude)[0].data)).model).toBe(
 			"claude-sonnet-4-6",
@@ -1033,7 +1054,7 @@ describe("less common API responses", () => {
 			gemini.respondWith(req =>
 				req.method === "GET" ? { response: listing } : defaultResponder(req),
 			);
-			gemini.byId("sai-summarize-button").click();
+			gemini.byId("summarize-button").click();
 			await settle();
 			expect(posts(gemini)[0].url).toBe(
 				"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
@@ -1048,32 +1069,32 @@ describe("less common API responses", () => {
 				? defaultResponder(req)
 				: { response: { content: [{ type: "thinking" }] } },
 		);
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] API response did not contain a valid summary (block type: thinking, status: 200).",
 		);
 
 		page.respondWith(() => ({ status: 502, response: {} }));
-		page.byId("sai-summarize-retry-button").click();
+		page.byId("summarize-retry-button").click();
 		await settle();
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] API Error (502): Unknown API error",
 		);
 	});
 
 	it("tells the user in the open overlay when the key disappears mid-session", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 		page.storage.delete("claude_api_key");
 
-		const input = page.byId("sai-summarize-question-input");
+		const input = page.byId("summarize-question-input");
 		input.value = "Anything?";
-		page.byId("sai-summarize-ask-button").click();
+		page.byId("summarize-ask-button").click();
 		await settle();
 
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Claude API key is required. To add one, long-press the S button and select Reset Key.",
 		);
 	});
@@ -1082,7 +1103,7 @@ describe("less common API responses", () => {
 describe("answer formatting", () => {
 	it("turns headers, notes, lists and paragraphs into tidy HTML", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 		const reply = [
 			"[Short answer]",
@@ -1105,12 +1126,12 @@ describe("answer formatting", () => {
 				: { response: { content: [{ type: "text", text: reply }] } },
 		);
 
-		const input = page.byId("sai-summarize-question-input");
+		const input = page.byId("summarize-question-input");
 		input.value = "What happened?";
 		fire(page.window, input, "keypress", { key: "Enter" });
 		await settle();
 
-		expect(page.$(".sai-answer-content").innerHTML).toBe(
+		expect(page.$(".answer-content").innerHTML).toBe(
 			[
 				"<p><strong>Short answer</strong></p>",
 				"<p>Rates rose.</p>",
@@ -1134,23 +1155,23 @@ describe("smaller interactions", () => {
 	it("closes an alert by clicking its backdrop", async () => {
 		const page = await loadPage();
 		await openModelMenu(page);
-		page.$(".sai-reset-key-link").click();
+		page.$(".reset-key-link").click();
 		await settle(150);
-		page.$(".sai-modal-button-primary").click();
+		page.$(".modal-button-primary").click();
 		await settle(260);
 
-		page.byId("sai-custom-modal-overlay").click();
+		page.byId("custom-modal-overlay").click();
 		await settle(260);
 
-		expect(page.byId("sai-custom-modal-overlay")).toBeNull();
+		expect(page.byId("custom-modal-overlay")).toBeNull();
 	});
 
 	it("ignores focus moving between non-input elements", async () => {
 		const page = await loadPage();
 
-		page.$("article").dispatchEvent(new page.window.FocusEvent("focusin", { bubbles: true }));
+		page.onPage("article").dispatchEvent(new page.window.FocusEvent("focusin", { bubbles: true }));
 
-		expect(page.byId("sai-summarize-button").style.display).toBe("");
+		expect(page.byId("summarize-button").style.display).toBe("");
 	});
 });
 
@@ -1158,16 +1179,16 @@ describe("edge cases found while testing", () => {
 	it("keeps the model menu open while the API-key prompt has focus", async () => {
 		const page = await loadPage();
 		await openModelMenu(page);
-		page.$(".sai-reset-key-link").click();
+		page.$(".reset-key-link").click();
 		await settle(150);
 
 		page
-			.byId("sai-custom-modal-input")
-			.dispatchEvent(new page.window.FocusEvent("focusin", { bubbles: true }));
+			.byId("custom-modal-input")
+			.dispatchEvent(new page.window.FocusEvent("focusin", { bubbles: true, composed: true }));
 
 		// Focus inside the script's own prompt is not the user typing into the page.
-		expect(page.byId("sai-summarize-button").style.display).toBe("");
-		expect(page.byId("sai-model-dropdown").style.display).toBe("block");
+		expect(page.byId("summarize-button").style.display).toBe("");
+		expect(page.byId("model-dropdown").style.display).toBe("block");
 	});
 
 	it("drops HTML comments from a summary along with the unsafe markup", async () => {
@@ -1178,32 +1199,32 @@ describe("edge cases found while testing", () => {
 				: { response: { content: [{ type: "text", text: "<p>Kept<!-- hidden note --></p>" }] } },
 		);
 
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$(".sai-summary-content-body").innerHTML).toBe("<p>Kept</p>");
+		expect(page.$(".summary-content-body").innerHTML).toBe("<p>Kept</p>");
 	});
 
 	it("treats an empty body as an empty response, and shows a network error's status", async () => {
 		const page = await loadPage({ storage: KEYED });
 		page.respondWith(req => (req.method === "GET" ? defaultResponder(req) : { response: "" }));
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] API response did not contain a valid summary (status: 200).",
 		);
 
 		page.respondWith(() => ({ fail: "error", statusText: "Bad Gateway" }));
-		page.byId("sai-summarize-retry-button").click();
+		page.byId("summarize-retry-button").click();
 		await settle();
-		expect(page.$(".sai-error-text")?.textContent).toBe(
+		expect(page.$(".error-text")?.textContent).toBe(
 			"Error: [claude-sonnet-5-0] Network error: Bad Gateway",
 		);
 	});
 
 	it("keeps a bracketed header in its own paragraph", async () => {
 		const page = await loadPage({ storage: KEYED });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 		page.respondWith(req =>
 			req.method === "GET"
@@ -1211,12 +1232,12 @@ describe("edge cases found while testing", () => {
 				: { response: { content: [{ type: "text", text: "[Key facts:]\n\nRates are up." }] } },
 		);
 
-		const input = page.byId("sai-summarize-question-input");
+		const input = page.byId("summarize-question-input");
 		input.value = "Facts?";
 		fire(page.window, input, "keypress", { key: "Enter" });
 		await settle();
 
-		expect(page.$(".sai-answer-content").innerHTML).toBe(
+		expect(page.$(".answer-content").innerHTML).toBe(
 			"<p><strong>Key facts:</strong></p>\n<p>Rates are up.</p>",
 		);
 	});
@@ -1225,14 +1246,14 @@ describe("edge cases found while testing", () => {
 describe("timing and limits", () => {
 	it("dismisses an error notification by itself after four seconds", async () => {
 		const page = await loadPage({ storage: { ...KEYED, last_used_model: "gpt-9" } });
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
-		expect(page.byId("sai-summarize-error")?.classList.contains("sai-error-active")).toBe(true);
+		expect(page.byId("summarize-error")?.classList.contains("error-active")).toBe(true);
 
 		await settle(4000);
-		expect(page.byId("sai-summarize-error")?.classList.contains("sai-error-active")).toBe(false);
+		expect(page.byId("summarize-error")?.classList.contains("error-active")).toBe(false);
 		await settle(200);
-		expect(page.byId("sai-summarize-error")).toBeNull();
+		expect(page.byId("summarize-error")).toBeNull();
 	});
 
 	it("leaves the overlay closed when a summary arrives after the user closed it", async () => {
@@ -1242,15 +1263,15 @@ describe("timing and limits", () => {
 				latest_sonnet_cache: { modelId: "claude-sonnet-4-6", timestamp: NOW.getTime() },
 			},
 		});
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		// Promise callbacks only, no timers: the loading overlay is up, the reply is not.
 		for (let i = 0; i < 50; i++) await Promise.resolve();
-		page.byId("sai-summarize-close").click();
+		page.byId("summarize-close").click();
 
 		await settle();
 
 		expect(posts(page)).toHaveLength(1);
-		expect(page.byId("sai-summarize-overlay")).toBeNull();
+		expect(page.byId("summarize-overlay")).toBeNull();
 	});
 
 	it("rediscovers the model once the cached one is a day old", async () => {
@@ -1263,7 +1284,7 @@ describe("timing and limits", () => {
 				},
 			},
 		});
-		page.byId("sai-summarize-button").click();
+		page.byId("summarize-button").click();
 		await settle();
 
 		expect(page.requests.filter(r => r.method === "GET")).toHaveLength(1);
@@ -1284,36 +1305,36 @@ describe("timing and limits", () => {
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p>${imgs}</article>`,
 		});
-		for (const img of page.$$("article img")) sized(img, 1000, 600);
-		page.byId("sai-summarize-button").click();
+		for (const img of page.allOnPage("article img")) sized(img, 1000, 600);
+		page.byId("summarize-button").click();
 		await settle();
 
-		expect(page.$$(".sai-gallery-item")).toHaveLength(6);
-		page.$(".sai-gallery-item").click();
-		expect(page.$(".sai-lightbox-counter").textContent).toBe("1 / 12");
+		expect(page.$$(".gallery-item")).toHaveLength(6);
+		page.$(".gallery-item").click();
+		expect(page.$(".lightbox-counter").textContent).toBe("1 / 12");
 	});
 
 	it("ignores keys other than Enter and Escape in the API-key prompt", async () => {
 		const page = await loadPage();
 		await openModelMenu(page);
-		page.$(".sai-reset-key-link").click();
+		page.$(".reset-key-link").click();
 		await settle(150);
 
-		const input = page.byId("sai-custom-modal-input");
+		const input = page.byId("custom-modal-input");
 		const typed = fire(page.window, input, "keydown", { key: "a" });
 		await settle(260);
 
 		expect(typed.defaultPrevented).toBe(false);
-		expect(page.byId("sai-custom-modal-overlay")?.isConnected).toBe(true);
+		expect(page.byId("custom-modal-overlay")?.isConnected).toBe(true);
 	});
 
 	it("keeps the menu open for keys other than Escape", async () => {
 		const page = await loadPage();
-		fire(page.window, page.byId("sai-summarize-button"), "keydown", { key: "ArrowUp" });
+		fire(page.window, page.byId("summarize-button"), "keydown", { key: "ArrowUp" });
 
-		fire(page.window, page.document.activeElement, "keydown", { key: "Tab" });
+		fire(page.window, page.focused(), "keydown", { key: "Tab" });
 
-		expect(page.byId("sai-model-dropdown").style.display).toBe("block");
+		expect(page.byId("model-dropdown").style.display).toBe("block");
 	});
 
 	it("ignores a short swipe in the lightbox", async () => {
@@ -1322,16 +1343,16 @@ describe("timing and limits", () => {
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/a.png"><img src="https://example.com/b.png"></article>`,
 		});
-		for (const img of page.$$("article img")) sized(img, 1000, 600);
-		page.byId("sai-summarize-button").click();
+		for (const img of page.allOnPage("article img")) sized(img, 1000, 600);
+		page.byId("summarize-button").click();
 		await settle();
-		page.$(".sai-gallery-item").click();
+		page.$(".gallery-item").click();
 
-		const content = page.$(".sai-lightbox-content");
+		const content = page.$(".lightbox-content");
 		const at = (/** @type {number} */ x) => ({ screenX: x, screenY: 0, clientX: x, clientY: 0 });
 		touch(page.window, content, "touchstart", { touches: [at(100)] });
 		touch(page.window, content, "touchend", { changedTouches: [at(130)] });
 
-		expect(page.$(".sai-lightbox-counter").textContent).toBe("1 / 2");
+		expect(page.$(".lightbox-counter").textContent).toBe("1 / 2");
 	});
 });

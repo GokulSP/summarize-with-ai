@@ -18,6 +18,11 @@ tasks:
         --coverage.include="scripts/*.js" --coverage.reporter=text
         --coverage.thresholds.lines=80 --coverage.thresholds.branches=80 {{.CLI_ARGS}}
 
+  test:e2e:
+    desc: Playwright in Edge on a page whose CSS fights the UI; scope with -- -g <name>
+    cmds:
+      - pnpm exec playwright test {{.CLI_ARGS}}
+
   sync:metadata:
     desc: Regenerate the userscript metadata block
     cmds:

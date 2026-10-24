@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Summarize with AI
 // @namespace   https://github.com/GokulSP/summarize-with-ai
-// @version     2026.10.03.01
+// @version     2026.10.24.01
 // @description Single-button AI summarization (Claude & Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' (tap-and-hold on mobile, Arrow Up from the keyboard) to select model. Custom modals with Dieter Rams-inspired design. Adapts to dark mode and mobile viewports.
 // @author      Hélio <open@helio.me>
 // @contributor Gokul SP (Personal fork maintainer)
@@ -10,7 +10,7 @@
 // @match       https://hbr.org/*
 // @match       https://www.economist.com/*
 // @match       https://www.mckinsey.com/*
-// @grant       GM.addStyle
+// @grant       GM_addElement
 // @grant       GM.xmlHttpRequest
 // @grant       GM.setValue
 // @grant       GM.getValue
@@ -24,27 +24,24 @@
 
 (() => {
 	const CONFIG = {
-		// DOM Element IDs
-		// All prefixed "sai-" (Summarize with AI) since this script runs on arbitrary
-		// third-party pages via @match — an unprefixed id like "custom-modal" could
-		// plausibly already exist on a host page.
+		// DOM Element IDs, scoped to the UI's shadow root (see UiRoot)
 		ids: {
-			button: "sai-summarize-button",
-			dropdown: "sai-model-dropdown",
-			overlay: "sai-summarize-overlay",
-			closeButton: "sai-summarize-close",
-			content: "sai-summarize-content",
-			error: "sai-summarize-error",
-			retryButton: "sai-summarize-retry-button",
-			askButton: "sai-summarize-ask-button",
-			questionInput: "sai-summarize-question-input",
-			questionSection: "sai-summarize-question-section",
-			modal: "sai-custom-modal",
-			modalOverlay: "sai-custom-modal-overlay",
-			modalContent: "sai-custom-modal-content",
-			modalMessage: "sai-custom-modal-message",
-			modalInput: "sai-custom-modal-input",
-			modalActions: "sai-custom-modal-actions",
+			button: "summarize-button",
+			dropdown: "model-dropdown",
+			overlay: "summarize-overlay",
+			closeButton: "summarize-close",
+			content: "summarize-content",
+			error: "summarize-error",
+			retryButton: "summarize-retry-button",
+			askButton: "summarize-ask-button",
+			questionInput: "summarize-question-input",
+			questionSection: "summarize-question-section",
+			modal: "custom-modal",
+			modalOverlay: "custom-modal-overlay",
+			modalContent: "custom-modal-content",
+			modalMessage: "custom-modal-message",
+			modalInput: "custom-modal-input",
+			modalActions: "custom-modal-actions",
 		},
 
 		// Timing & Duration (milliseconds)
@@ -87,7 +84,7 @@
 			},
 		},
 
-		// UI font stack; colors live as CSS custom properties on .sai-scope
+		// UI font stack; colors live as CSS custom properties on each top-level UI element (:host > *)
 		styles: {
 			fontFamily:
 				'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
@@ -330,12 +327,57 @@ Format exactly as shown:
 	 */
 	function showMessage(message) {
 		if (Overlay.isOpen()) {
-			Overlay.update(`<p class="sai-error-text">${escapeHtml(message)}</p>`, {
+			Overlay.update(`<p class="error-text">${escapeHtml(message)}</p>`, {
 				images: state.articleImages,
 			});
 		} else {
 			showErrorNotification(message);
 		}
+	}
+
+	// --- UI root ---
+	// Everything the script shows lives in one shadow root. The page's selectors can't
+	// reach inside it, !important ones included, and the UI's own rules can't leak out.
+	// Two things still cross the boundary: inheritance from the host element (the
+	// stylesheet's :host rule resets it) and rem, which always measures the page's <html>
+	// (so the stylesheet sizes everything in px).
+	const UiRoot = (() => {
+		/** @type {ShadowRoot | null} */
+		let root = null;
+
+		/** Adds an element to the UI; the first call puts the shadow root and its stylesheet on the page. @param {HTMLElement} element */
+		function append(element) {
+			if (!root) {
+				const host = document.createElement("sai-root");
+				// Open, so the script can follow focus and events inside it. Closed would
+				// hide nothing: key events bubble out to the page's listeners either way.
+				root = host.attachShadow({ mode: "open" });
+				// GM_addElement gets the <style> past a page CSP that blocks inline styles.
+				// Both managers accept a ShadowRoot parent; @types/tampermonkey types it as Element.
+				GM_addElement(/** @type {any} */ (root), "style", { textContent: buildStylesheet() });
+				document.body.appendChild(host);
+			}
+			root.appendChild(element);
+		}
+
+		/** @param {string} id */
+		const byId = id => root?.getElementById(id) ?? null;
+
+		/**
+		 * Whether node is the UI's host element or inside the UI. A listener on the page
+		 * sees an event from inside the UI with the host element as its target.
+		 * @param {Node | null} node
+		 */
+		const contains = node => root !== null && (node === root.host || root.contains(node));
+
+		return { append, byId, contains };
+	})();
+
+	/** Whether an input has focus, looking inside shadow roots, where document.activeElement stops at the host. */
+	function isInputFocused() {
+		let focused = document.activeElement;
+		while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+		return Boolean(focused?.closest(CONFIG.selectors.input));
 	}
 
 	/** @typedef {HTMLElement & { _escHandler?: (e: KeyboardEvent) => void }} ModalOverlayElement */
@@ -367,19 +409,19 @@ Format exactly as shown:
 			const modalOverlay = /** @type {ModalOverlayElement} */ (
 				createElement("div", {
 					id: CONFIG.ids.modalOverlay,
-					className: "sai-scope sai-modal-overlay",
+					className: "modal-overlay",
 				})
 			);
 
 			const modalContent = createElement("div", {
 				id: CONFIG.ids.modalContent,
-				className: `sai-modal-content sai-modal-${type}`,
+				className: `modal-content modal-${type}`,
 			});
 
 			modalContent.appendChild(
 				createElement("div", {
 					id: CONFIG.ids.modalMessage,
-					className: "sai-modal-message",
+					className: "modal-message",
 					textContent: options.message,
 				}),
 			);
@@ -389,7 +431,7 @@ Format exactly as shown:
 			if (type === "prompt") {
 				inputEl = createElement("input", {
 					id: CONFIG.ids.modalInput,
-					className: "sai-modal-input",
+					className: "modal-input",
 					type: options.inputType || "text",
 					placeholder: options.placeholder || "",
 					value: options.defaultValue || "",
@@ -400,12 +442,12 @@ Format exactly as shown:
 			// Actions
 			const actionsEl = createElement("div", {
 				id: CONFIG.ids.modalActions,
-				className: "sai-modal-actions",
+				className: "modal-actions",
 			});
 
 			if (type === "alert") {
 				const okBtn = createElement("button", {
-					className: "sai-modal-button sai-modal-button-primary",
+					className: "modal-button modal-button-primary",
 					textContent: "OK",
 					onclick: () => this.resolve(true),
 					onmouseout: (/** @type {MouseEvent} */ e) =>
@@ -414,14 +456,14 @@ Format exactly as shown:
 				actionsEl.appendChild(okBtn);
 			} else if (type === "prompt") {
 				const cancelBtn = createElement("button", {
-					className: "sai-modal-button sai-modal-button-secondary",
+					className: "modal-button modal-button-secondary",
 					textContent: "Cancel",
 					onclick: () => this.resolve(null),
 					onmouseout: (/** @type {MouseEvent} */ e) =>
 						/** @type {HTMLElement} */ (e.target)?.blur(),
 				});
 				const okBtn = createElement("button", {
-					className: "sai-modal-button sai-modal-button-primary",
+					className: "modal-button modal-button-primary",
 					textContent: "OK",
 					onclick: () => {
 						const value = inputEl?.value || "";
@@ -449,7 +491,7 @@ Format exactly as shown:
 
 			modalContent.appendChild(actionsEl);
 			modalOverlay.appendChild(modalContent);
-			document.body.appendChild(modalOverlay);
+			UiRoot.append(modalOverlay);
 
 			// Focus management
 			if (inputEl) {
@@ -480,7 +522,7 @@ Format exactly as shown:
 
 			// Animation
 			requestAnimationFrame(() => {
-				modalOverlay.classList.add("sai-modal-active");
+				modalOverlay.classList.add("modal-active");
 			});
 		},
 
@@ -491,7 +533,7 @@ Format exactly as shown:
 			if (!modal?._escHandler) return;
 			document.removeEventListener("keydown", modal._escHandler);
 			modal._escHandler = undefined;
-			modal.classList.remove("sai-modal-active");
+			modal.classList.remove("modal-active");
 			setTimeout(() => {
 				this.close();
 				this.resolveCallback?.(value);
@@ -613,10 +655,10 @@ Format exactly as shown:
 
 		/** @param {string} contentHTML @param {OverlayContentOptions} options */
 		function buildContent(contentHTML, { isError = false, isLoading = false }) {
-			let html = `<div class="sai-summary-content-body">${contentHTML}</div>`;
+			let html = `<div class="summary-content-body">${contentHTML}</div>`;
 
 			if (isError) {
-				html += `<div style="text-align:center;padding-bottom:var(--space-md)"><button id="${CONFIG.ids.retryButton}" class="sai-retry-button">Try Again</button></div>`;
+				html += `<div style="text-align:center;padding-bottom:var(--space-md)"><button id="${CONFIG.ids.retryButton}" class="retry-button">Try Again</button></div>`;
 			} else if (!isLoading) {
 				if (images.length > 0) {
 					const galleryItems = [];
@@ -624,8 +666,8 @@ Format exactly as shown:
 					for (let i = 0; i < displayLimit; i++) {
 						const item = images[i];
 						if (item.type === "iframe") {
-							galleryItems.push(`<button type="button" class="sai-gallery-item sai-gallery-item-iframe" data-image-index="${i}">
-                <span class="sai-iframe-preview">
+							galleryItems.push(`<button type="button" class="gallery-item gallery-item-iframe" data-image-index="${i}">
+                <span class="iframe-preview">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <rect x="2" y="3" width="20" height="14" rx="2"/>
                     <line x1="8" y1="21" x2="16" y2="21"/>
@@ -636,31 +678,31 @@ Format exactly as shown:
                 </span>
               </button>`);
 						} else {
-							galleryItems.push(`<button type="button" class="sai-gallery-item" data-image-index="${i}">
+							galleryItems.push(`<button type="button" class="gallery-item" data-image-index="${i}">
                 <img src="${escapeHtml(item.src)}" alt="${escapeHtml(item.alt || "Article image")}" loading="lazy" decoding="async" />
               </button>`);
 						}
 					}
-					html += `<div class="sai-image-gallery">${galleryItems.join("")}</div>`;
+					html += `<div class="image-gallery">${galleryItems.join("")}</div>`;
 				}
 
-				html += `<div id="${CONFIG.ids.questionSection}" class="sai-question-section">
-          <label class="sai-question-header" for="${CONFIG.ids.questionInput}">Ask a question about this article:</label>
-          <div class="sai-question-input-wrapper">
+				html += `<div id="${CONFIG.ids.questionSection}" class="question-section">
+          <label class="question-header" for="${CONFIG.ids.questionInput}">Ask a question about this article:</label>
+          <div class="question-input-wrapper">
             <input
               type="text"
               id="${CONFIG.ids.questionInput}"
-              class="sai-question-input"
+              class="question-input"
               placeholder="Ask a question..."
             />
-            <button id="${CONFIG.ids.askButton}" class="sai-ask-button">Ask</button>
+            <button id="${CONFIG.ids.askButton}" class="ask-button">Ask</button>
           </div>
-          <div id="sai-answer-container" class="sai-answer-container"></div>
+          <div id="answer-container" class="answer-container"></div>
         </div>`;
 			}
 
-			html += `<div class="sai-summary-menubar">`;
-			html += `<button id="${CONFIG.ids.closeButton}" class="sai-menubar-button" title="Close (Esc)">Close</button></div>`;
+			html += `<div class="summary-menubar">`;
+			html += `<button id="${CONFIG.ids.closeButton}" class="menubar-button" title="Close (Esc)">Close</button></div>`;
 			return html;
 		}
 
@@ -678,9 +720,9 @@ Format exactly as shown:
 				content.querySelector(`#${CONFIG.ids.questionInput}`)
 			);
 			const answerContainer = /** @type {HTMLElement | null} */ (
-				content.querySelector("#sai-answer-container")
+				content.querySelector("#answer-container")
 			);
-			const imageGallery = content.querySelector(".sai-image-gallery");
+			const imageGallery = content.querySelector(".image-gallery");
 
 			const ask = () => {
 				if (!questionInput || !answerContainer) return;
@@ -712,7 +754,7 @@ Format exactly as shown:
 				},
 				/** @param {Event} e */
 				galleryClick: e => {
-					const item = /** @type {HTMLElement} */ (e.target)?.closest(".sai-gallery-item");
+					const item = /** @type {HTMLElement} */ (e.target)?.closest(".gallery-item");
 					if (item instanceof HTMLElement && item.dataset.imageIndex) {
 						Lightbox.open(images, parseInt(item.dataset.imageIndex, 10));
 					}
@@ -748,10 +790,10 @@ Format exactly as shown:
 		 */
 		function show(contentHTML, options = {}) {
 			if (!overlay) {
-				const opened = createElement("div", { id: CONFIG.ids.overlay, className: "sai-scope" });
+				const opened = createElement("div", { id: CONFIG.ids.overlay });
 				opened.appendChild(createElement("div", { id: CONFIG.ids.content }));
 				opened.onclick = e => e.target === opened && close();
-				document.body.appendChild(opened);
+				UiRoot.append(opened);
 				document.body.style.overflow = "hidden";
 				overlay = opened;
 			}
@@ -796,7 +838,6 @@ Format exactly as shown:
 			state.activeModel = await StorageService.loadLastUsedModel(state.activeModel);
 			ModelMenu.mount();
 			document.addEventListener("keydown", handleKeyPress);
-			injectStyles();
 		}
 	}
 
@@ -1014,15 +1055,15 @@ Format exactly as shown:
 
 		/** @param {string} text @param {Service} service */
 		function createHeader(text, service) {
-			const container = createElement("div", { className: "sai-group-header-container" });
+			const container = createElement("div", { className: "group-header-container" });
 			container.appendChild(
-				createElement("span", { className: "sai-group-header-text", textContent: text }),
+				createElement("span", { className: "group-header-text", textContent: text }),
 			);
 			container.appendChild(
 				createElement("button", {
 					type: "button",
 					textContent: "Reset Key",
-					className: "sai-reset-key-link",
+					className: "reset-key-link",
 					title: `Reset ${text} API Key`,
 					onclick: (/** @type {MouseEvent} */ e) => {
 						e.stopPropagation();
@@ -1037,14 +1078,14 @@ Format exactly as shown:
 		function createModelItem(modelObj, service) {
 			const item = createElement("button", {
 				type: "button",
-				className: "sai-model-item",
+				className: "model-item",
 				textContent: modelObj.name,
 				title: "Click to use this model.",
 			});
 			item.dataset.modelId = modelObj.id;
 			item.dataset.service = service;
 			if (modelObj.id === state.activeModel) {
-				item.classList.add("sai-model-item-active");
+				item.classList.add("model-item-active");
 			}
 			return item;
 		}
@@ -1054,7 +1095,7 @@ Format exactly as shown:
 			const fragment = document.createDocumentFragment();
 			for (const [serviceKey, group] of Object.entries(CONFIG.modelGroups)) {
 				const service = /** @type {Service} */ (serviceKey);
-				const groupDiv = createElement("div", { className: "sai-model-group" });
+				const groupDiv = createElement("div", { className: "model-group" });
 				groupDiv.appendChild(createHeader(group.name, service));
 				for (const modelObj of group.models) {
 					groupDiv.appendChild(createModelItem(modelObj, service));
@@ -1087,8 +1128,7 @@ Format exactly as shown:
 			if (!dropdown) return;
 			if (!isDropdownOpen()) toggleDropdown();
 			const item = /** @type {HTMLElement | null} */ (
-				dropdown.querySelector(".sai-model-item-active") ??
-					dropdown.querySelector(".sai-model-item")
+				dropdown.querySelector(".model-item-active") ?? dropdown.querySelector(".model-item")
 			);
 			item?.focus();
 		}
@@ -1103,10 +1143,10 @@ Format exactly as shown:
 			/** @type {ReturnType<typeof setTimeout> | null} */
 			let focusOutTimer = null;
 
+			// Focus inside the UI (the API-key prompt, the question box) isn't typing into the page.
 			document.addEventListener("focusin", event => {
 				const target = /** @type {Element | null} */ (event.target);
-				const isModalInput = target?.closest(".sai-modal-overlay");
-				if (target?.closest(CONFIG.selectors.input) && !isModalInput) {
+				if (target?.closest(CONFIG.selectors.input) && !UiRoot.contains(target)) {
 					if (focusOutTimer) {
 						clearTimeout(focusOutTimer);
 						focusOutTimer = null;
@@ -1121,13 +1161,13 @@ Format exactly as shown:
 				event => {
 					const target = /** @type {Element | null} */ (event.target);
 					const relatedTarget = /** @type {Element | null} */ (event.relatedTarget);
-					const isModalInput = target?.closest(".sai-modal-overlay");
-					const isLeavingInput = target?.closest(CONFIG.selectors.input) && !isModalInput;
+					const isLeavingInput =
+						target?.closest(CONFIG.selectors.input) && !UiRoot.contains(target);
 					const isEnteringInput = relatedTarget?.closest(CONFIG.selectors.input);
 
 					if (isLeavingInput && !isEnteringInput && state.articleData !== null) {
 						focusOutTimer = setTimeout(() => {
-							if (!document.activeElement?.closest(CONFIG.selectors.input)) {
+							if (!isInputFocused()) {
 								setButtonVisible(true);
 							}
 							focusOutTimer = null;
@@ -1143,7 +1183,6 @@ Format exactly as shown:
 			const summarizeButton = createElement("button", {
 				type: "button",
 				id: CONFIG.ids.button,
-				className: "sai-scope",
 				textContent: "S",
 				title: "Summarize (Alt+S) / Long Press, Tap & Hold or Arrow Up to Select Model",
 			});
@@ -1151,11 +1190,10 @@ Format exactly as shown:
 			summarizeButton.setAttribute("aria-haspopup", "menu");
 			const menu = createElement("div", {
 				id: CONFIG.ids.dropdown,
-				className: "sai-scope",
 				style: "display: none",
 			});
-			document.body.appendChild(summarizeButton);
-			document.body.appendChild(menu);
+			UiRoot.append(summarizeButton);
+			UiRoot.append(menu);
 			populate(menu);
 			button = summarizeButton;
 			dropdown = menu;
@@ -1174,7 +1212,7 @@ Format exactly as shown:
 			});
 
 			menu.addEventListener("click", (/** @type {MouseEvent} */ e) => {
-				const modelItem = /** @type {HTMLElement} */ (e.target)?.closest(".sai-model-item");
+				const modelItem = /** @type {HTMLElement} */ (e.target)?.closest(".model-item");
 				if (modelItem instanceof HTMLElement && modelItem.dataset.modelId) {
 					hideDropdown();
 					onSelectModel(modelItem.dataset.modelId);
@@ -1190,9 +1228,10 @@ Format exactly as shown:
 				}
 			});
 
+			// The path, not event.target: a page listener sees a click inside the UI as one on its host.
 			document.addEventListener("click", (/** @type {MouseEvent} */ event) => {
-				const target = /** @type {Node} */ (event.target);
-				if (isDropdownOpen() && !menu.contains(target) && !summarizeButton.contains(target)) {
+				const path = event.composedPath();
+				if (isDropdownOpen() && !path.includes(menu) && !path.includes(summarizeButton)) {
 					hideDropdown();
 				}
 			});
@@ -1220,41 +1259,40 @@ Format exactly as shown:
 
 	/** @param {string} message */
 	function showErrorNotification(message) {
-		const existing = document.getElementById(CONFIG.ids.error);
-		if (existing) existing.remove();
+		UiRoot.byId(CONFIG.ids.error)?.remove();
 
 		const errorDiv =
 			/** @type {HTMLDivElement & { _autoDismissTimeout?: ReturnType<typeof setTimeout> }} */ (
 				createElement("div", {
 					id: CONFIG.ids.error,
-					className: "sai-scope sai-error-notification",
+					className: "error-notification",
 				})
 			);
 
 		const messageEl = createElement("div", {
-			className: "sai-error-message",
+			className: "error-message",
 			innerText: message,
 		});
 
 		const closeBtn = createElement("button", {
-			className: "sai-error-close",
+			className: "error-close",
 			textContent: "×",
 			onclick: () => errorDiv.remove(),
 		});
 
 		errorDiv.appendChild(messageEl);
 		errorDiv.appendChild(closeBtn);
-		document.body.appendChild(errorDiv);
+		UiRoot.append(errorDiv);
 
 		// Animate in
 		requestAnimationFrame(() => {
-			errorDiv.classList.add("sai-error-active");
+			errorDiv.classList.add("error-active");
 		});
 
 		// Auto-dismiss after duration, but allow manual dismiss (with cleanup)
 		const autoDismissTimeout = setTimeout(() => {
 			if (errorDiv.parentNode) {
-				errorDiv.classList.remove("sai-error-active");
+				errorDiv.classList.remove("error-active");
 				setTimeout(() => {
 					if (errorDiv.parentNode) {
 						errorDiv.remove();
@@ -1462,7 +1500,7 @@ Format exactly as shown:
 
 	/** @param {string} modelDisplayName */
 	function showLoadingState(modelDisplayName) {
-		Overlay.show(`<p class="sai-glow">Summarizing with ${escapeHtml(modelDisplayName)}... </p>`, {
+		Overlay.show(`<p class="glow">Summarizing with ${escapeHtml(modelDisplayName)}... </p>`, {
 			isLoading: true,
 		});
 	}
@@ -1472,7 +1510,7 @@ Format exactly as shown:
 		const errorMsg = `Error: ${error.message}`;
 		console.error("Summarize with AI:", errorMsg, error);
 		// The message can carry provider or response-body text, so it's escaped.
-		Overlay.show(`<p class="sai-error-text">${escapeHtml(errorMsg)}</p>`, {
+		Overlay.show(`<p class="error-text">${escapeHtml(errorMsg)}</p>`, {
 			isError: true,
 		});
 		ModelMenu.hideDropdown();
@@ -1793,7 +1831,7 @@ Format exactly as shown:
 	/** @param {string | null} finishReason @param {Service} service @returns {string} */
 	function truncationNotice(finishReason, service) {
 		if (finishReason !== PROVIDERS[service].truncatedReason) return "";
-		return '<p class="sai-error-text">The response was cut short because it hit the model’s length limit.</p>';
+		return '<p class="error-text">The response was cut short because it hit the model’s length limit.</p>';
 	}
 
 	/** @param {ApiResponse} response */
@@ -1978,15 +2016,15 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 			const formattedAnswer = formatQAAnswer(answer) + truncationNotice(finishReason, service);
 
 			answerBox.showAnswer(`
-        <div class="sai-answer">
+        <div class="answer">
           <p><strong>Q:</strong> ${escapeHtml(question)}</p>
-          <div class="sai-answer-content">${formattedAnswer}</div>
+          <div class="answer-content">${formattedAnswer}</div>
         </div>
       `);
 			answerBox.clearQuestion();
 		} catch (/** @type {any} */ error) {
 			console.error("Ask question failed:", error);
-			answerBox.showAnswer(`<p class="sai-error-text">Error: ${escapeHtml(error.message)}</p>`);
+			answerBox.showAnswer(`<p class="error-text">Error: ${escapeHtml(error.message)}</p>`);
 		} finally {
 			answerBox.setBusy(false);
 		}
@@ -2079,23 +2117,23 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 
 		function createLightbox() {
 			const lightbox = createElement("div", {
-				className: "sai-scope sai-lightbox-overlay",
+				className: "lightbox-overlay",
 			});
 			lb.overlay = lightbox;
 
 			// Create content container
 			const lightboxContent = createElement("div", {
-				className: "sai-lightbox-content",
+				className: "lightbox-content",
 			});
 
 			const img = createElement("img", {
-				className: "sai-lightbox-image",
+				className: "lightbox-image",
 				alt: "Full size image",
 				title: "Scroll or pinch to zoom, drag to pan, double-click/tap to reset",
 			});
 
 			const iframe = createElement("iframe", {
-				className: "sai-lightbox-iframe",
+				className: "lightbox-iframe",
 				frameborder: "0",
 				scrolling: "no",
 				style: "display: none;",
@@ -2106,32 +2144,32 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 
 			// Create thumbnail strip
 			const thumbnailStrip = createElement("div", {
-				className: "sai-lightbox-thumbnails",
+				className: "lightbox-thumbnails",
 			});
 
 			// Create menu bar at bottom (similar to summary overlay)
 			const menuBar = createElement("div", {
-				className: "sai-lightbox-menubar",
+				className: "lightbox-menubar",
 			});
 
 			const prevBtn = createElement("button", {
-				className: "sai-menubar-button sai-lightbox-prev",
+				className: "menubar-button lightbox-prev",
 				textContent: "← Prev",
 				onclick: () => navigateLightbox(-1),
 			});
 
 			const counter = createElement("div", {
-				className: "sai-lightbox-counter",
+				className: "lightbox-counter",
 			});
 
 			const nextBtn = createElement("button", {
-				className: "sai-menubar-button sai-lightbox-next",
+				className: "menubar-button lightbox-next",
 				textContent: "Next →",
 				onclick: () => navigateLightbox(1),
 			});
 
 			const closeBtn = createElement("button", {
-				className: "sai-menubar-button",
+				className: "menubar-button",
 				textContent: "Close",
 				title: "Close (Esc)",
 				onclick: closeLightbox,
@@ -2145,7 +2183,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 			lightbox.appendChild(lightboxContent);
 			lightbox.appendChild(thumbnailStrip);
 			lightbox.appendChild(menuBar);
-			document.body.appendChild(lightbox);
+			UiRoot.append(lightbox);
 
 			// Cache lightbox elements to avoid repeated DOM queries
 			lb.elements = {
@@ -2354,12 +2392,12 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 			nextBtn.disabled = currentImageIndex === images.length - 1;
 
 			// Update active thumbnail highlight
-			const thumbnails = thumbnailStrip.querySelectorAll(".sai-lightbox-thumbnail-item");
+			const thumbnails = thumbnailStrip.querySelectorAll(".lightbox-thumbnail-item");
 			thumbnails.forEach((thumb, idx) => {
 				if (idx === currentImageIndex) {
-					thumb.classList.add("sai-active");
+					thumb.classList.add("active");
 				} else {
-					thumb.classList.remove("sai-active");
+					thumb.classList.remove("active");
 				}
 			});
 
@@ -2388,7 +2426,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 			images.forEach((item, index) => {
 				const thumbItem = createElement("button", {
 					type: "button",
-					className: "sai-lightbox-thumbnail-item",
+					className: "lightbox-thumbnail-item",
 				});
 
 				const isIframe = item.type === "iframe";
@@ -2397,13 +2435,13 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 				let thumbContent;
 				if (isIframe) {
 					thumbContent = createElement("span", {
-						className: "sai-lightbox-thumbnail-iframe-indicator",
+						className: "lightbox-thumbnail-iframe-indicator",
 						textContent: "🖼️",
 						title: "Interactive content",
 					});
 				} else {
 					thumbContent = createElement("img", {
-						className: "sai-lightbox-thumbnail-img",
+						className: "lightbox-thumbnail-img",
 						src: item.src,
 						alt: item.alt || `Image ${index + 1}`,
 					});
@@ -2447,7 +2485,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 	function handleKeyPress(e) {
 		if (e.altKey && e.code === "KeyS" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
 			e.preventDefault();
-			if (!document.activeElement?.closest(CONFIG.selectors.input)) {
+			if (!isInputFocused()) {
 				processSummarization();
 			}
 		}
@@ -2464,20 +2502,26 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 		}
 	}
 
-	function injectStyles() {
+	/** The UI's stylesheet, for the shadow root (see UiRoot). */
+	function buildStylesheet() {
 		const fontFamily = CONFIG.styles.fontFamily;
 
-		GM.addStyle(`
+		return `
+      /* The host element is the one part of the UI the page's rules still match, and
+         what it inherits or gets set (font, color, a z-index or transform that would
+         trap the fixed-position UI) passes inside. An !important declaration in a
+         shadow root beats every outside one, so this is the one rule that needs it. */
+      :host {
+        all: initial !important;
+      }
+
       /* =================================================================
          DESIGN SYSTEM TOKENS - Dieter Rams Principles
          Less but better: Unified spacing, colors, typography, transitions
          ================================================================= */
-      .sai-scope {
-        /* Reset inheritable text properties so host-page styles (font, color,
-           line-height, etc. cascade via inheritance, not selector specificity)
-           can't bleed into the injected UI. Not "all: initial" - that would also
-           reset non-inherited layout properties (display, position, margin) that
-           this file's own more-specific rules for each container rely on. */
+      :host > * {
+        /* Base text styles for each top-level UI element. :host has reset what the
+           page would pass down, so each inherited property starts from its initial value. */
         font-family: ${fontFamily};
         font-size: var(--font-size-base);
         font-weight: 400;
@@ -2515,8 +2559,8 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         --button-text: #ffffff;
         --input-focus-border: #d0d0d0;
         --overlay-bg: rgba(0, 0, 0, 0.4);
-        --sai-modal-button-text: #666;
-        --sai-answer-border: #1a1a1a;
+        --modal-button-text: #666;
+        --answer-border: #1a1a1a;
         --group-header-bg: #fafafa;
         --menubar-bg: rgba(255, 255, 255, 0.98);
         --section-bg: #f8f8f8;
@@ -2566,7 +2610,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
 
       /* Dark Mode Overrides */
       @media (prefers-color-scheme: dark) {
-        .sai-scope {
+        :host > * {
           --color-text-primary: #e8e8e8;
           --color-text-secondary: #999;
           --color-text-tertiary: #949494;
@@ -2584,8 +2628,8 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
           --button-text: #1a1a1a;
           --input-focus-border: #444;
           --overlay-bg: rgba(0, 0, 0, 0.6);
-          --sai-modal-button-text: #999;
-          --sai-answer-border: #666;
+          --modal-button-text: #999;
+          --answer-border: #666;
           --group-header-bg: #242424;
           --menubar-bg: rgba(26, 26, 26, 0.98);
           --section-bg: #1a1a1a;
@@ -2605,13 +2649,13 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
            double-tap zoom, which would otherwise swallow quick taps. */
         #${CONFIG.ids.overlay},
         #${CONFIG.ids.content},
-        .sai-modal-overlay,
-        .sai-modal-content,
-        .sai-summary-content-body,
-        .sai-question-section,
-        .sai-image-gallery,
-        .sai-lightbox-overlay,
-        .sai-lightbox-content {
+        .modal-overlay,
+        .modal-content,
+        .summary-content-body,
+        .question-section,
+        .image-gallery,
+        .lightbox-overlay,
+        .lightbox-content {
           touch-action: manipulation;
           user-select: none;
           -webkit-user-select: none;
@@ -2622,13 +2666,13 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         #${CONFIG.ids.content} ul,
         #${CONFIG.ids.content} ol,
         #${CONFIG.ids.content} li,
-        .sai-answer-content {
+        .answer-content {
           user-select: text;
           -webkit-user-select: text;
         }
 
         /* Ensure buttons and interactive elements remain functional */
-        .sai-scope button,
+        :host button,
         #${CONFIG.ids.button} {
           touch-action: manipulation;
           user-select: none;
@@ -2636,8 +2680,8 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         }
 
         /* Allow input fields to be interactive */
-        .sai-question-input,
-        .sai-modal-input {
+        .question-input,
+        .modal-input {
           touch-action: manipulation;
           user-select: text;
           -webkit-user-select: text;
@@ -2647,7 +2691,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          CUSTOM MODAL SYSTEM - Dieter Rams Design Principles
          ================================================================= */
-      .sai-modal-overlay {
+      .modal-overlay {
         position: fixed;
         top: 0; left: 0;
         width: 100%; height: 100%;
@@ -2660,12 +2704,12 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         opacity: 0;
       }
 
-      .sai-modal-overlay.sai-modal-active {
+      .modal-overlay.modal-active {
         background: var(--overlay-bg);
         opacity: 1;
       }
 
-      .sai-modal-content {
+      .modal-content {
         background: var(--color-bg-primary);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-lg);
@@ -2678,11 +2722,11 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         overflow: hidden;
       }
 
-      .sai-modal-active .sai-modal-content {
+      .modal-active .modal-content {
         transform: scale(1) translateY(0);
       }
 
-      .sai-modal-message {
+      .modal-message {
         padding: var(--space-lg) var(--space-lg) var(--space-md) var(--space-lg);
         font-size: var(--font-size-base);
         line-height: var(--line-height-normal);
@@ -2690,7 +2734,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         text-align: left;
       }
 
-      .sai-modal-input {
+      .modal-input {
         width: 100%;
         padding: 12px var(--space-sm);
         margin: 0 var(--space-lg) var(--space-md) var(--space-lg);
@@ -2706,7 +2750,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         outline: none;
       }
 
-      .sai-modal-input:focus {
+      .modal-input:focus {
         border-color: var(--input-focus-border);
         background: var(--color-bg-primary);
         box-shadow: none;
@@ -2714,17 +2758,17 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         outline-offset: -1px;
       }
 
-      .sai-modal-input::placeholder {
+      .modal-input::placeholder {
         color: var(--color-text-tertiary);
       }
 
-      .sai-modal-actions {
+      .modal-actions {
         display: flex;
         gap: 0;
         border-top: 1px solid var(--color-border-light);
       }
 
-      .sai-modal-button {
+      .modal-button {
         flex: 1;
         padding: var(--space-sm);
         border: none;
@@ -2734,22 +2778,22 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         font-weight: var(--font-weight-normal);
         cursor: pointer;
         transition: background var(--transition-fast);
-        color: var(--sai-modal-button-text);
+        color: var(--modal-button-text);
         user-select: none;
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
       }
 
-      .sai-modal-button:hover {
+      .modal-button:hover {
         background: var(--color-bg-hover);
       }
 
-      .sai-modal-button:active {
+      .modal-button:active {
         background: transparent;
       }
 
       /* Every button the script adds shows where keyboard focus is. */
-      .sai-scope button:focus-visible {
+      :host button:focus-visible {
         outline: 2px solid var(--color-accent);
         outline-offset: 2px;
       }
@@ -2758,16 +2802,16 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         outline-offset: 3px;
       }
       /* Inset: the modal clips anything drawn outside its buttons. */
-      .sai-scope .sai-modal-button:focus {
+      :host .modal-button:focus {
         outline: 2px solid var(--color-accent);
         outline-offset: -2px;
       }
 
-      .sai-modal-button-secondary {
+      .modal-button-secondary {
         border-right: 1px solid var(--color-border-light);
       }
 
-      .sai-modal-button:only-child {
+      .modal-button:only-child {
         border-right: none;
       }
 
@@ -2852,7 +2896,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         scrollbar-width: thin;
         scrollbar-color: var(--color-border) transparent;
       }
-      .sai-summary-menubar {
+      .summary-menubar {
         display: flex; justify-content: flex-end; gap: 12px;
         position: sticky; bottom: 0;
         background: var(--menubar-bg);
@@ -2861,7 +2905,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         z-index: 10;
         backdrop-filter: blur(10px);
       }
-      .sai-menubar-button {
+      .menubar-button {
         background: transparent;
         border: 1px solid var(--color-border);
         font-family: ${fontFamily};
@@ -2877,12 +2921,12 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
       }
-      .sai-menubar-button:hover {
+      .menubar-button:hover {
         background: var(--color-bg-hover);
         border-color: var(--color-border);
         color: var(--color-text-primary);
       }
-      .sai-summary-content-body {
+      .summary-content-body {
         padding: var(--space-lg) var(--space-xl);
         flex: 1;
         display: flex;
@@ -2891,8 +2935,8 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       }
 
       /* When content is loaded, remove centering */
-      .sai-summary-content-body:has(ul),
-      .sai-summary-content-body:has(p:not(.sai-glow)) {
+      .summary-content-body:has(ul),
+      .summary-content-body:has(p:not(.glow)) {
         justify-content: flex-start;
       }
       #${CONFIG.ids.content},
@@ -2901,41 +2945,41 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       #${CONFIG.ids.content} strong,
       #${CONFIG.ids.content} button,
       #${CONFIG.ids.content} input {
-        font-family: ${fontFamily} !important;
-        font-weight: var(--font-weight-normal) !important;
+        font-family: ${fontFamily};
+        font-weight: var(--font-weight-normal);
       }
       #${CONFIG.ids.content} p {
         margin-top: 0;
         margin-bottom: 1.2em;
         color: inherit;
         max-width: 65ch;
-        font-size: var(--font-size-base) !important;
-        line-height: 1.5 !important;
+        font-size: var(--font-size-base);
+        line-height: 1.5;
       }
       #${CONFIG.ids.content} ul {
         margin: 0 0 1.2em 0;
         padding-left: 1.5em;
         color: inherit;
-        font-size: var(--font-size-base) !important;
+        font-size: var(--font-size-base);
       }
       #${CONFIG.ids.content} li {
         list-style-type: disc;
         margin-bottom: 0.6em;
         color: inherit;
-        font-size: var(--font-size-base) !important;
-        line-height: 1.5 !important;
+        font-size: var(--font-size-base);
+        line-height: 1.5;
       }
       #${CONFIG.ids.content} strong {
-        font-weight: var(--font-weight-semibold) !important;
+        font-weight: var(--font-weight-semibold);
         color: var(--color-text-primary);
-        font-size: 1em !important;
+        font-size: 1em;
         letter-spacing: -0.005em;
       }
       #${CONFIG.ids.content} span:not([class*="article-"]) {
         color: inherit;
       }
       /* Error Notification - Dieter Rams Style */
-      .sai-error-notification {
+      .error-notification {
         position: fixed;
         bottom: 80px;
         left: 50%;
@@ -2956,12 +3000,12 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         transition: all var(--transition-base);
       }
 
-      .sai-error-notification.sai-error-active {
+      .error-notification.error-active {
         opacity: 1;
         transform: translateX(-50%) translateY(0);
       }
 
-      .sai-error-message {
+      .error-message {
         flex: 1;
         font-size: var(--font-size-base);
         line-height: 1.5;
@@ -2969,7 +3013,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         margin: 0;
       }
 
-      .sai-error-close {
+      .error-close {
         background: transparent;
         border: none;
         color: var(--color-text-secondary);
@@ -2988,12 +3032,12 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         font-family: ${fontFamily};
       }
 
-      .sai-error-close:hover {
+      .error-close:hover {
         background: var(--color-bg-hover);
         color: var(--color-text-primary);
       }
 
-      .sai-retry-button {
+      .retry-button {
         display: block;
         margin: var(--space-md) auto 0;
         padding: 12px var(--space-md);
@@ -3008,7 +3052,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         transition: all var(--transition-fast);
         letter-spacing: 0.02em;
       }
-      .sai-retry-button:hover {
+      .retry-button:hover {
         background-color: var(--button-bg-hover);
         box-shadow: var(--shadow-sm);
         transform: translateY(-1px);
@@ -3017,25 +3061,25 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          Q&A SECTION
          ================================================================= */
-      .sai-question-section {
+      .question-section {
         border-top: 1px solid var(--color-border-light);
         padding: var(--space-md) var(--space-xl);
         margin-top: 0;
         background: var(--section-bg);
       }
-      .sai-question-header {
+      .question-header {
         display: block;
         font-weight: var(--font-weight-normal);
         color: var(--color-text-primary);
         margin-bottom: 12px;
         font-size: var(--font-size-base);
       }
-      .sai-question-input-wrapper {
+      .question-input-wrapper {
         display: flex;
         gap: 10px;
         margin-bottom: var(--space-sm);
       }
-      .sai-question-input {
+      .question-input {
         flex: 1;
         padding: 10px 14px;
         border: 1px solid var(--color-border);
@@ -3047,18 +3091,18 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         color: var(--color-text-primary);
         outline: none;
       }
-      .sai-question-input:focus {
+      .question-input:focus {
         outline: 2px solid var(--color-accent);
         outline-offset: -1px;
         border-color: var(--input-focus-border);
         box-shadow: none;
       }
-      .sai-question-input:disabled {
+      .question-input:disabled {
         background: var(--color-bg-hover);
         color: var(--color-text-secondary);
         cursor: not-allowed;
       }
-      .sai-ask-button {
+      .ask-button {
         padding: 10px 20px;
         background-color: var(--button-bg);
         color: var(--button-text);
@@ -3074,49 +3118,49 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
       }
-      .sai-ask-button:hover:not(:disabled) {
+      .ask-button:hover:not(:disabled) {
         background-color: var(--button-bg-hover);
       }
-      .sai-ask-button:disabled {
+      .ask-button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
       }
-      .sai-answer-container {
+      .answer-container {
         min-height: 40px;
       }
-      .sai-answer {
+      .answer {
         background: var(--color-bg-primary);
         padding: var(--space-sm);
         border-radius: var(--radius-sm);
-        border-left: 3px solid var(--sai-answer-border);
+        border-left: 3px solid var(--answer-border);
         line-height: var(--line-height-normal);
       }
-      .sai-answer > p {
+      .answer > p {
         margin-top: 0;
         margin-bottom: 1em;
       }
-      .sai-answer > p:first-child {
+      .answer > p:first-child {
         font-weight: var(--font-weight-semibold);
         color: var(--color-text-primary);
         margin-bottom: 0.75em;
       }
-      .sai-answer strong {
+      .answer strong {
         color: var(--color-text-primary);
         font-weight: var(--font-weight-semibold);
       }
-      .sai-answer-content {
+      .answer-content {
         margin-top: 0.5em;
       }
-      .sai-answer-content p {
+      .answer-content p {
         margin-top: 0;
         margin-bottom: 1em;
         line-height: var(--line-height-normal);
       }
-      .sai-answer-content ul {
+      .answer-content ul {
         margin: 0.75em 0;
         padding-left: 1.5em;
       }
-      .sai-answer-content li {
+      .answer-content li {
         margin-bottom: 0.5em;
         line-height: 1.5;
       }
@@ -3124,7 +3168,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          IMAGE GALLERY
          ================================================================= */
-      .sai-image-gallery {
+      .image-gallery {
         padding: var(--space-md) var(--space-xl);
         background: var(--section-bg);
         border-top: 1px solid var(--color-border-light);
@@ -3132,7 +3176,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 12px;
       }
-      .sai-gallery-item {
+      .gallery-item {
         display: block;
         width: 100%;
         padding: 0;
@@ -3146,11 +3190,11 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         cursor: pointer;
         transition: transform var(--transition-fast), box-shadow var(--transition-fast);
       }
-      .sai-gallery-item:hover {
+      .gallery-item:hover {
         transform: translateY(-2px);
         box-shadow: var(--shadow-md);
       }
-      .sai-gallery-item img {
+      .gallery-item img {
         width: 100%;
         height: 180px;
         object-fit: cover;
@@ -3158,18 +3202,18 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       }
       /* Exhibit-chart SVGs are designed for a white canvas — force it regardless of
          dark/light mode so chart text stays legible, and avoid cropping chart labels. */
-      .sai-gallery-item img[src*=".svg"] {
+      .gallery-item img[src*=".svg"] {
         background: var(--chart-canvas-bg);
         object-fit: contain;
       }
-      .sai-gallery-item-iframe {
+      .gallery-item-iframe {
         display: flex;
         align-items: center;
         justify-content: center;
         background: var(--color-bg-hover);
         min-height: 200px;
       }
-      .sai-iframe-preview {
+      .iframe-preview {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -3177,11 +3221,11 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         gap: var(--space-xs);
         color: var(--color-text-secondary);
       }
-      .sai-iframe-preview svg {
+      .iframe-preview svg {
         width: 48px;
         height: 48px;
       }
-      .sai-iframe-preview span {
+      .iframe-preview span {
         font-size: var(--font-size-sm);
         font-weight: var(--font-weight-normal);
       }
@@ -3189,7 +3233,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          LIGHTBOX VIEWER
          ================================================================= */
-      .sai-lightbox-overlay {
+      .lightbox-overlay {
         position: fixed;
         top: 0;
         left: 0;
@@ -3201,7 +3245,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         flex-direction: column;
         animation: fadeIn 0.3s ease-out;
       }
-      .sai-lightbox-menubar {
+      .lightbox-menubar {
         display: flex;
         justify-content: center;
         align-items: center;
@@ -3213,7 +3257,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         backdrop-filter: blur(8px);
         flex-shrink: 0;
       }
-      .sai-lightbox-menubar .sai-menubar-button {
+      .lightbox-menubar .menubar-button {
         background: transparent;
         border: 1px solid var(--color-border);
         font-family: ${fontFamily};
@@ -3225,16 +3269,16 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         border-radius: var(--radius-sm);
         transition: all var(--transition-base);
       }
-      .sai-lightbox-menubar .sai-menubar-button:hover:not(:disabled) {
+      .lightbox-menubar .menubar-button:hover:not(:disabled) {
         background: var(--color-bg-hover);
         border-color: var(--color-border);
         color: var(--color-text-primary);
       }
-      .sai-lightbox-menubar .sai-menubar-button:disabled {
+      .lightbox-menubar .menubar-button:disabled {
         opacity: 0.3;
         cursor: not-allowed;
       }
-      .sai-lightbox-counter {
+      .lightbox-counter {
         color: var(--color-text-secondary);
         padding: 4px 12px;
         font-size: var(--font-size-base);
@@ -3242,7 +3286,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         font-weight: var(--font-weight-normal);
         margin: 0;
       }
-      .sai-lightbox-content {
+      .lightbox-content {
         flex: 1;
         display: flex;
         align-items: center;
@@ -3250,7 +3294,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         overflow: hidden;
         padding: 20px;
       }
-      .sai-lightbox-image {
+      .lightbox-image {
         max-width: 100%;
         max-height: 100%;
         object-fit: contain;
@@ -3259,10 +3303,10 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         touch-action: none;
         cursor: zoom-in;
       }
-      .sai-lightbox-image[src*=".svg"] {
+      .lightbox-image[src*=".svg"] {
         background: var(--chart-canvas-bg);
       }
-      .sai-lightbox-iframe {
+      .lightbox-iframe {
         width: 90vw;
         max-width: 1200px;
         height: 80vh;
@@ -3271,7 +3315,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       }
 
       /* Thumbnail Strip */
-      .sai-lightbox-thumbnails {
+      .lightbox-thumbnails {
         display: flex;
         justify-content: center;
         gap: 8px;
@@ -3285,17 +3329,17 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         scrollbar-width: thin;
         scrollbar-color: var(--color-border) transparent;
       }
-      .sai-lightbox-thumbnails::-webkit-scrollbar {
+      .lightbox-thumbnails::-webkit-scrollbar {
         height: 6px;
       }
-      .sai-lightbox-thumbnails::-webkit-scrollbar-track {
+      .lightbox-thumbnails::-webkit-scrollbar-track {
         background: transparent;
       }
-      .sai-lightbox-thumbnails::-webkit-scrollbar-thumb {
+      .lightbox-thumbnails::-webkit-scrollbar-thumb {
         background: var(--color-border);
         border-radius: 3px;
       }
-      .sai-lightbox-thumbnail-item {
+      .lightbox-thumbnail-item {
         position: relative;
         flex-shrink: 0;
         width: 80px;
@@ -3308,25 +3352,25 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         transition: all var(--transition-fast);
         background: var(--color-bg-primary);
       }
-      .sai-lightbox-thumbnail-item.sai-active {
+      .lightbox-thumbnail-item.active {
         border-color: var(--color-text-primary);
         box-shadow: 0 0 0 1px var(--color-text-primary);
       }
-      .sai-lightbox-thumbnail-item:hover {
+      .lightbox-thumbnail-item:hover {
         border-color: var(--color-border);
         transform: scale(1.05);
       }
-      .sai-lightbox-thumbnail-img {
+      .lightbox-thumbnail-img {
         width: 100%;
         height: 100%;
         object-fit: cover;
         display: block;
       }
-      .sai-lightbox-thumbnail-img[src*=".svg"] {
+      .lightbox-thumbnail-img[src*=".svg"] {
         background: var(--chart-canvas-bg);
         object-fit: contain;
       }
-      .sai-lightbox-thumbnail-iframe-indicator {
+      .lightbox-thumbnail-iframe-indicator {
         width: 100%;
         height: 100%;
         display: flex;
@@ -3339,10 +3383,10 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          DROPDOWN COMPONENTS
          ================================================================= */
-      .sai-model-group {
+      .model-group {
         margin-bottom: 12px;
       }
-      .sai-group-header-container {
+      .group-header-container {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -3352,7 +3396,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         margin-bottom: 6px;
         border-left: 2px solid var(--color-border);
       }
-      .sai-group-header-text {
+      .group-header-text {
         font-weight: var(--font-weight-normal);
         color: var(--color-text-secondary);
         font-size: var(--font-size-base);
@@ -3360,7 +3404,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         letter-spacing: 0.08em;
         flex-grow: 1;
       }
-      .sai-reset-key-link {
+      .reset-key-link {
         background: none;
         border: none;
         padding: 0;
@@ -3374,10 +3418,10 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         transition: color var(--transition-fast);
         font-weight: var(--font-weight-normal);
       }
-      .sai-reset-key-link:hover {
+      .reset-key-link:hover {
         color: var(--reset-link-hover);
       }
-      .sai-model-item {
+      .model-item {
         width: 100%;
         text-align: left;
         background: transparent;
@@ -3396,27 +3440,27 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
         white-space: nowrap;
         font-weight: var(--font-weight-normal);
       }
-      .sai-model-item:hover {
+      .model-item:hover {
         background-color: var(--color-bg-hover);
         color: var(--color-text-primary);
         transform: translateX(2px);
       }
-      .sai-model-item.sai-model-item-active,
-      .sai-model-item.sai-model-item-active:hover {
+      .model-item.model-item-active,
+      .model-item.model-item-active:hover {
         color: var(--color-accent);
       }
-      .sai-error-text {
+      .error-text {
         color: var(--color-error);
       }
 
       /* =================================================================
          LOADING & STATUS INDICATORS
          ================================================================= */
-      .sai-glow {
+      .glow {
         text-align: center;
         margin: 0;
         padding: 0;
-        animation: sai-glow 2.5s ease-in-out infinite;
+        animation: glow 2.5s ease-in-out infinite;
         text-shadow: 0 0 12px color-mix(in srgb, currentColor 40%, transparent);
         font-family: ${fontFamily};
         font-weight: 400;
@@ -3427,7 +3471,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
       /* =================================================================
          ANIMATIONS
          ================================================================= */
-      @keyframes sai-glow {
+      @keyframes glow {
         0%, 100% { color: var(--glow-1); }
         33%      { color: var(--glow-2); }
         66%      { color: var(--glow-3); }
@@ -3444,30 +3488,30 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
          ================================================================= */
       @media (max-width: 600px) {
          /* Custom Modal Mobile */
-         .sai-modal-content {
+         .modal-content {
            max-width: 95%;
            border-radius: 12px;
          }
 
-         .sai-modal-message {
+         .modal-message {
            padding: 24px 24px 20px 24px;
            font-size: var(--font-size-sm);
          }
 
-         .sai-modal-input {
+         .modal-input {
            margin: 0 24px 20px 24px;
            width: calc(100% - 48px);
            padding: 12px 14px;
            font-size: var(--font-size-sm);
          }
 
-         .sai-modal-button {
+         .modal-button {
            padding: 14px;
            font-size: var(--font-size-sm);
          }
 
          /* Error Notification Mobile */
-         .sai-error-notification {
+         .error-notification {
            bottom: 20px;
            left: 16px;
            right: 16px;
@@ -3477,25 +3521,25 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
            padding: 14px 16px;
          }
 
-         .sai-error-notification.sai-error-active {
+         .error-notification.error-active {
            transform: translateX(0) translateY(0);
          }
 
-         .sai-error-message {
+         .error-message {
            font-size: var(--font-size-sm);
          }
 
-         .sai-error-close {
+         .error-close {
            width: 44px;
            height: 44px;
          }
 
          /* 44px touch targets */
-         .sai-menubar-button,
-         .sai-ask-button,
-         .sai-modal-button,
-         .sai-model-item,
-         .sai-reset-key-link {
+         .menubar-button,
+         .ask-button,
+         .modal-button,
+         .model-item,
+         .reset-key-link {
            min-height: 44px;
            min-width: 44px;
          }
@@ -3508,7 +3552,7 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
             overflow-y: auto;
             border-radius: 0;
          }
-         .sai-summary-menubar {
+         .summary-menubar {
             padding: 10px 16px;
             position: fixed;
             bottom: 0;
@@ -3516,58 +3560,56 @@ Keep your answer under 150 words. Write in clear paragraphs. No section headers.
             right: 0;
             z-index: 11;
          }
-         .sai-menubar-button {
+         .menubar-button {
             font-size: var(--font-size-sm);
             padding: 6px 10px;
          }
-         .sai-summary-content-body {
+         .summary-content-body {
             padding: 20px 16px;
          }
-         .sai-question-section {
+         .question-section {
             padding: 20px 16px;
          }
-         .sai-question-header {
+         .question-header {
             font-size: var(--font-size-sm);
          }
-         .sai-question-input-wrapper {
+         .question-input-wrapper {
             flex-direction: column;
             gap: 8px;
          }
-         .sai-question-input {
+         .question-input {
             font-size: var(--font-size-sm);
          }
-         .sai-ask-button {
+         .ask-button {
             width: 100%;
             font-size: var(--font-size-sm);
          }
-         .sai-image-gallery {
+         .image-gallery {
             padding: 20px 16px;
             grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
             gap: 10px;
          }
-         .sai-gallery-item img {
+         .gallery-item img {
             height: 140px;
          }
-         #${CONFIG.ids.overlay} ~ #${CONFIG.ids.button},
-         #${CONFIG.ids.overlay} ~ #${CONFIG.ids.dropdown} { display: none !important; }
 
-         .sai-lightbox-menubar {
+         .lightbox-menubar {
             padding: 8px 12px;
             gap: 8px;
          }
-         .sai-lightbox-menubar .sai-menubar-button {
+         .lightbox-menubar .menubar-button {
             font-size: var(--font-size-sm);
             padding: 4px 6px;
          }
-         .sai-lightbox-counter {
+         .lightbox-counter {
             font-size: var(--font-size-sm);
             padding: 4px 8px;
          }
-         .sai-lightbox-content {
+         .lightbox-content {
             padding: 10px;
          }
       }
-    `);
+    `;
 	}
 
 	// --- Initialization ---
