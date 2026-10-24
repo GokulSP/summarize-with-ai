@@ -47,7 +47,8 @@ const defaultResponder = req => {
  * @param {{ storage?: Record<string, any>, body?: string, url?: string, responder?: (req: SentRequest) => Reply }} [options]
  */
 async function loadPage(options = {}) {
-	const window = new Window({ url: options.url ?? "https://www.economist.com/finance/rates" });
+	// A page no site rule matches; site-specific tests pass their own url.
+	const window = new Window({ url: options.url ?? "https://example.com/post" });
 	const document = window.document;
 	document.title = "Rates rise again";
 	document.body.innerHTML =
@@ -634,7 +635,6 @@ describe("keyboard-only use", () => {
 
 	it("reaches gallery images and thumbnails as buttons", async () => {
 		const page = await loadPage({
-			url: "https://example.com/post",
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/a.png" alt="A"></article>`,
 		});
@@ -745,23 +745,24 @@ describe("keyboard and pointer shortcuts", () => {
 describe("image gallery and lightbox", () => {
 	const GALLERY_PAGE = `<article><p>${ARTICLE_TEXT}</p>
 		<iframe src="https://flo.uri.sh/visualisation/1/embed" title="Rates chart"></iframe>
-		<img src="https://www.economist.com/cdn-cgi/image/width=360/content-assets/images/WBC1.png" alt="Chart one">
-		<img src="https://www.economist.com/cdn-cgi/image/width=1424/content-assets/images/big.jpg" alt="Hero">
-		<img src="https://www.economist.com/cdn-cgi/image/width=1600/content-assets/images/big2.jpg" alt="Second hero">
-		<img src="https://www.economist.com/cdn-cgi/image/width=800/x_DE_y.jpg" alt="Header">
-		<div class="teaser_mb-teaser__x"><img src="https://www.economist.com/cdn-cgi/image/width=900/content-assets/images/teaser.jpg"></div>
-		<img src="data:image/png;base64,AAAA">
-		<img src="https://www.economist.com/tiny.png">
+		<img id="chart" src="https://example.com/chart.png" alt="Chart one">
+		<img id="hero" src="https://example.com/hero.jpg" alt="Hero">
+		<img id="inline" src="data:image/png;base64,AAAA">
+		<img id="tiny" src="https://example.com/tiny.png">
 	</article>`;
 
 	async function openGallery() {
 		const page = await loadPage({ storage: KEYED, body: GALLERY_PAGE });
+		sized(page.onPage("#chart"), 1000, 600);
+		sized(page.onPage("#hero"), 1600, 900);
+		sized(page.onPage("#inline"), 1000, 600);
+		sized(page.onPage("#tiny"), 120, 80);
 		page.byId("summarize-button").click();
 		await settle(700);
 		return page;
 	}
 
-	it("collects charts and article images, skipping promos, headers and tiny images", async () => {
+	it("collects charts and article images, skipping inline data and tiny images", async () => {
 		const page = await openGallery();
 
 		const items = page.$$(".gallery-item");
@@ -898,7 +899,6 @@ describe("site-specific image filtering", () => {
 	it("keeps a page image's alt text as text, even with quotes in it", async () => {
 		const alt = 'Chart" onerror="boom()';
 		const page = await loadPage({
-			url: "https://example.com/post",
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/chart.png"></article>`,
 		});
@@ -936,7 +936,6 @@ describe("site-specific image filtering", () => {
 
 	it("waits for lazy images and reads deferred sources", async () => {
 		const page = await loadPage({
-			url: "https://example.com/post",
 			storage: KEYED,
 			body: `<main><p>${ARTICLE_TEXT}</p>
 				<iframe data-src="https://datawrapper.dwcdn.net/abc/1/"></iframe>
@@ -1301,7 +1300,6 @@ describe("timing and limits", () => {
 			(_, i) => `<img src="https://example.com/${i}.png" alt="Image ${i}">`,
 		).join("");
 		const page = await loadPage({
-			url: "https://example.com/post",
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p>${imgs}</article>`,
 		});
@@ -1339,7 +1337,6 @@ describe("timing and limits", () => {
 
 	it("ignores a short swipe in the lightbox", async () => {
 		const page = await loadPage({
-			url: "https://example.com/post",
 			storage: KEYED,
 			body: `<article><p>${ARTICLE_TEXT}</p><img src="https://example.com/a.png"><img src="https://example.com/b.png"></article>`,
 		});

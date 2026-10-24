@@ -8,7 +8,6 @@
 // @contributor Claude (Anthropic AI assistant)
 // @license     WTFPL
 // @match       https://hbr.org/*
-// @match       https://www.economist.com/*
 // @match       https://www.mckinsey.com/*
 // @grant       GM_addElement
 // @grant       GM.xmlHttpRequest

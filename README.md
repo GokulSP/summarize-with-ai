@@ -1,6 +1,6 @@
 # summarize-with-ai
 
-A userscript that summarizes articles with Claude or Gemini in one click, with an image gallery, follow-up Q&A, and a Dieter Rams–inspired UI — for readers of Harvard Business Review, The Economist, and McKinsey & Company who want the gist without the full article. Personal fork of [Summarize with AI](https://github.com/insign/userscripts) by Hélio.
+A userscript that summarizes articles with Claude or Gemini in one click, with an image gallery, follow-up Q&A, and a Dieter Rams–inspired UI — for readers of Harvard Business Review and McKinsey & Company who want the gist without the full article. Personal fork of [Summarize with AI](https://github.com/insign/userscripts) by Hélio.
 
 ## Setup
 
@@ -27,7 +27,7 @@ task setup   # pnpm install + lefthook install
 
 ## Application commands
 
-This is a browser userscript, not a CLI — there's no terminal command to run. Its one entry point is triggered from the page itself, on a supported site (Harvard Business Review, The Economist, McKinsey & Company):
+This is a browser userscript, not a CLI — there's no terminal command to run. Its one entry point is triggered from the page itself, on a supported site (Harvard Business Review, McKinsey & Company):
 
 - **Alt+S**, or click the floating button — summarizes the current article with the latest Claude or Gemini model (auto-discovered at runtime)
 - **Long-press the button** (or press Arrow Up while it has focus) — switch models; each model keeps its own summary cache
@@ -59,7 +59,7 @@ None — no `process.env` usage anywhere in the script; the API key is stored vi
 - Image gallery with full-screen lightbox (keyboard + swipe navigation)
 - Follow-up Q&A about the article, answered by the same model
 - Dark mode, mobile-optimized, custom modals instead of browser dialogs
-- Supported sites: Harvard Business Review, The Economist, McKinsey & Company
+- Supported sites: Harvard Business Review, McKinsey & Company
 
 ## Notes
 

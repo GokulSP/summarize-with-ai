@@ -8,7 +8,6 @@
 // @contributor Claude (Anthropic AI assistant)
 // @license     WTFPL
 // @match       https://hbr.org/*
-// @match       https://www.economist.com/*
 // @match       https://www.mckinsey.com/*
 // @grant       GM_addElement
 // @grant       GM.xmlHttpRequest
@@ -866,9 +865,6 @@ Format exactly as shown:
 		}
 	}
 
-	// Pre-compiled regex patterns (compile once at module level)
-	const IMAGE_ASPECT_RATIO = 0.5625; // 9/16
-	const ECONOMIST_WIDTH_PARAM = /cdn-cgi\/image\/width=(\d+)/;
 	const HBR_EXCLUDED_PREFIXES = [
 		"https://cdn11.bigcommerce.com/",
 		"https://hbr.org/resources/images/article_assets/2015/12/HBR-Ideacast-HP-feed.png",
@@ -887,13 +883,9 @@ Format exactly as shown:
 	 * @typedef {Object} SiteImageRules
 	 * @property {(img: HTMLImageElement, src: string) => boolean} [exclude] promo, teaser or
 	 *   headshot images to drop outright
-	 * @property {(src: string) => (ImageSize & { isChart: boolean }) | null} [sizeFromUrl] the
-	 *   rendered size encoded in the URL, when naturalWidth/Height can't be trusted
-	 * @property {(src: string, isChart: boolean) => boolean} [keepWhenSmall] charts worth
-	 *   keeping below the generic 300px minimum
+	 * @property {(src: string) => boolean} [keepWhenSmall] charts worth keeping below the
+	 *   generic 300px minimum
 	 * @property {(size: ImageSize) => boolean} [excludeSize] known ad/promo dimensions
-	 * @property {boolean} [firstLargeImageOnly] keep only the first image of 1280x720 or more
-	 *   (the rest are repeats of the hero image)
 	 */
 
 	/** @type {Record<string, SiteImageRules>} */
@@ -902,26 +894,6 @@ Format exactly as shown:
 			exclude: (_img, src) => HBR_EXCLUDED_PREFIXES.some(prefix => src.startsWith(prefix)),
 			excludeSize: ({ width, height }) =>
 				(width === 500 && height >= 700 && height <= 800) || (width === 383 && height === 215),
-		},
-		"economist.com": {
-			exclude: (img, src) =>
-				img.closest('[class*="e1kb1ha80"]') !== null ||
-				src.includes("_DE_") ||
-				// "More from"/related-article teaser cards use CSS-module classes like
-				// teaser_mb-teaser__k_8Tk -- the hashed suffix changes per deploy, but the
-				// mb-teaser token is stable.
-				img.closest('[class*="mb-teaser"]') !== null,
-			sizeFromUrl: src => {
-				const match = ECONOMIST_WIDTH_PARAM.exec(src);
-				if (!match) return null;
-				const width = parseInt(match[1], 10);
-				// WBC = Weekly Business Chart; content-assets/images also holds charts.
-				const isChart = src.includes("WBC") || src.includes("content-assets/images");
-				return { width, height: Math.round(width * IMAGE_ASPECT_RATIO), isChart };
-			},
-			// Economist charts are often only 360px wide.
-			keepWhenSmall: (_src, isChart) => isChart,
-			firstLargeImageOnly: true,
 		},
 		"mckinsey.com": {
 			exclude: (_img, src) =>
@@ -965,8 +937,6 @@ Format exactly as shown:
 			const images = [];
 			/** @type {Set<string>} */
 			const seen = new Set();
-
-			let hasLargeImage = false;
 
 			// Visualization domains for fast checking
 			const vizDomains = ["flo.uri.sh", "flourish", "datawrapper.dwcdn.net"];
@@ -1012,17 +982,10 @@ Format exactly as shown:
 
 				if (rules.exclude?.(img, src)) continue;
 
-				const fromUrl = rules.sizeFromUrl?.(src) ?? null;
-				const width = fromUrl ? fromUrl.width : img.naturalWidth;
-				const height = fromUrl ? fromUrl.height : img.naturalHeight;
-				const isChart = fromUrl?.isChart ?? false;
-
-				if ((width < 300 || height < 300) && !rules.keepWhenSmall?.(src, isChart)) continue;
+				const width = img.naturalWidth;
+				const height = img.naturalHeight;
+				if ((width < 300 || height < 300) && !rules.keepWhenSmall?.(src)) continue;
 				if (rules.excludeSize?.({ width, height })) continue;
-				if (rules.firstLargeImageOnly && width >= 1280 && height >= 720) {
-					if (hasLargeImage) continue;
-					hasLargeImage = true;
-				}
 
 				seen.add(src);
 				images.push({
